@@ -1,6 +1,19 @@
 
 import { Movie } from '../types';
 
+// Helper to force HTTPS on URLs
+const toHttps = (url: string | undefined | null): string => {
+  if (!url) return '';
+  if (url.startsWith('http://')) {
+    return url.replace('http://', 'https://');
+  }
+  // Handle protocol-relative URLs (starting with //)
+  if (url.startsWith('//')) {
+    return `https:${url}`;
+  }
+  return url;
+};
+
 // Helper function to perform SPARQL queries with fallback strategy
 const executeSparqlQuery = async (query: string): Promise<any> => {
   const finalQuery = query.replace(/\[AUTO_LANGUAGE\]/g, "en");
@@ -57,31 +70,34 @@ const executeSparqlQuery = async (query: string): Promise<any> => {
 
 /**
  * Generates a stable Wikimedia Thumbnail URL.
+ * Changed default width to 300 for "low quality" as requested.
  */
-const getWikimediaThumbnail = (originalUrl: string, width: number = 500): string => {
-    if (!originalUrl) return '';
-    if (!originalUrl.includes('upload.wikimedia.org')) return originalUrl;
+const getWikimediaThumbnail = (originalUrl: string, width: number = 300): string => {
+    let url = toHttps(originalUrl);
+    if (!url) return '';
+    if (!url.includes('upload.wikimedia.org')) return url;
     
     // Check if it's already a thumbnail
-    if (originalUrl.includes('/thumb/')) return originalUrl;
+    if (url.includes('/thumb/')) return url;
 
     try {
-        const url = new URL(originalUrl);
-        url.searchParams.set('width', width.toString());
-        return url.toString();
+        const u = new URL(url);
+        u.searchParams.set('width', width.toString());
+        return u.toString();
     } catch (e) {
-        return originalUrl;
+        return url;
     }
 };
 
 export const resolveWikimediaDirectUrl = async (url: string): Promise<string> => {
-    if (!url || !url.includes('commons.wikimedia.org/wiki/Special:FilePath/')) {
-        return url;
+    const safeUrl = toHttps(url);
+    if (!safeUrl || !safeUrl.includes('commons.wikimedia.org/wiki/Special:FilePath/')) {
+        return safeUrl;
     }
 
     try {
-        const parts = url.split('Special:FilePath/');
-        if (parts.length < 2) return url;
+        const parts = safeUrl.split('Special:FilePath/');
+        if (parts.length < 2) return safeUrl;
         
         const filenameEncoded = parts[1];
         const filename = decodeURIComponent(filenameEncoded);
@@ -92,18 +108,18 @@ export const resolveWikimediaDirectUrl = async (url: string): Promise<string> =>
         const data = await response.json();
         
         const pages = data.query?.pages;
-        if (!pages) return url;
+        if (!pages) return safeUrl;
 
         const firstPageId = Object.keys(pages)[0];
         const imageInfo = pages[firstPageId]?.imageinfo;
 
         if (imageInfo && imageInfo.length > 0) {
-            return imageInfo[0].url;
+            return toHttps(imageInfo[0].url);
         }
         
-        return url;
+        return safeUrl;
     } catch (e) {
-        return url;
+        return safeUrl;
     }
 };
 
@@ -149,8 +165,8 @@ export const fetchMovieByQid = async (qid: string): Promise<Partial<Movie> | nul
         directorId = parts[parts.length - 1];
     }
     
-    // Use the thumbnail helper for the poster
-    const posterUrl = b.image ? getWikimediaThumbnail(b.image.value, 600) : "";
+    // Use the thumbnail helper for the poster - Default 300 for low quality
+    const posterUrl = b.image ? getWikimediaThumbnail(b.image.value, 300) : "";
 
     return {
         wikidataId: cleanQid,
@@ -201,7 +217,7 @@ export const fetchMovieImages = async (query: string): Promise<string[]> => {
         if (!data || !data.results || !data.results.bindings) return [];
         
         return data.results.bindings.map((b: any) => 
-            getWikimediaThumbnail(b.image.value, 800)
+            getWikimediaThumbnail(b.image.value, 300)
         );
     } catch (e) {
         return [];

@@ -48,6 +48,8 @@ export interface FilterState {
   hasSubtitles: boolean | null;
   selectedDirector: string | null;
   selectedAward: string | null;
+  hasPosterOnly: boolean;
+  selectedTop30: string | null;
 }
 
 export interface UserMovieInteraction {

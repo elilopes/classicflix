@@ -1,11 +1,12 @@
+
 import React from 'react';
 import { 
   Filter, Star, CalendarDays, Languages, Palette, Layers, 
-  Clock4, MonitorPlay, Megaphone, Trophy, LayoutGrid, Type 
+  Clock4, MonitorPlay, Megaphone, Trophy, LayoutGrid, Type, TrendingUp, Image as ImageIcon
 } from 'lucide-react';
 import { FilterState, AppLanguage } from '../types';
 import { 
-  COLORS, DURATIONS, DECADES, RATING_CATEGORIES 
+  COLORS, DURATIONS, DECADES, RATING_CATEGORIES, MOST_WATCHED_MOVIES 
 } from '../constants';
 
 interface FilterBarProps {
@@ -18,8 +19,8 @@ interface FilterBarProps {
   viewMode: 'image' | 'text';
   setViewMode: (mode: 'image' | 'text') => void;
   languageCounts: Record<string, number>;
-  genreCounts: Record<string, number>; // New
-  themeCounts: Record<string, number>; // New
+  genreCounts: Record<string, number>; 
+  themeCounts: Record<string, number>; 
 }
 
 export const FilterBar: React.FC<FilterBarProps> = ({
@@ -36,14 +37,34 @@ export const FilterBar: React.FC<FilterBarProps> = ({
   themeCounts
 }) => {
   
-  // Sort dynamic keys alphabetically
   const sortedGenres = Object.keys(genreCounts).sort();
   const sortedThemes = Object.keys(themeCounts).sort();
   const sortedLanguages = Object.keys(languageCounts).sort();
 
   return (
     <div className="container-fluid p-3 bg-surface border-bottom border-secondary d-flex gap-2 flex-wrap sticky-top shadow-sm" style={{ top: '65px', zIndex: 100 }}>
-        {/* 1. Genres - DYNAMIC */}
+        
+        {/* NEW: Top 30 Most Watched */}
+        <div className="d-flex align-items-center gap-1 bg-dark px-2 rounded border border-warning" style={{ borderStyle: 'dashed' }}>
+            <TrendingUp size={14} className="text-warning" />
+            <select className="form-select bg-transparent border-0 text-white shadow-none py-1 small" value={filters.selectedTop30 || ""} onChange={e => setFilters({...filters, selectedTop30: e.target.value || null})}>
+                <option className="bg-dark text-white" value="">{t.top30Label}</option>
+                {MOST_WATCHED_MOVIES.map(m => (
+                    <option className="bg-dark text-white" key={m} value={m}>{m}</option>
+                ))}
+            </select>
+        </div>
+
+        {/* NEW: Only with Poster Toggle */}
+        <button 
+            className={`btn btn-sm d-flex align-items-center gap-2 border border-secondary ${filters.hasPosterOnly ? 'btn-danger border-danger' : 'btn-dark'}`}
+            onClick={() => setFilters({...filters, hasPosterOnly: !filters.hasPosterOnly})}
+        >
+            <ImageIcon size={14} />
+            <span className="small">{t.onlyWithPoster}</span>
+        </button>
+
+        {/* 1. Genres */}
         <div className="d-flex align-items-center gap-1 bg-dark px-2 rounded border border-secondary">
             <Filter size={14} className="text-secondary" />
             <select className="form-select bg-transparent border-0 text-white shadow-none py-1 small" value={filters.selectedGenre || ""} onChange={e => setFilters({...filters, selectedGenre: e.target.value || null})}>
@@ -80,7 +101,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
             </select>
         </div>
 
-        {/* 4. Language - DYNAMIC */}
+        {/* 4. Language */}
         <div className="d-flex align-items-center gap-1 bg-dark px-2 rounded border border-secondary">
             <Languages size={14} className="text-secondary" />
             <select className="form-select bg-transparent border-0 text-white shadow-none py-1 small" value={filters.selectedLanguage || ""} onChange={e => setFilters({...filters, selectedLanguage: e.target.value || null})}>
@@ -104,7 +125,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
             </select>
         </div>
 
-        {/* 6. Themes - DYNAMIC */}
+        {/* 6. Themes */}
         <div className="d-flex align-items-center gap-1 bg-dark px-2 rounded border border-secondary">
             <Layers size={14} className="text-secondary" />
             <select className="form-select bg-transparent border-0 text-white shadow-none py-1 small" value={filters.selectedTheme || ""} onChange={e => setFilters({...filters, selectedTheme: e.target.value || null})}>
