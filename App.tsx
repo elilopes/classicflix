@@ -18,7 +18,7 @@ import {
 } from './services/supabaseClient';
 
 import { 
-  Search, Film, User, LogOut, Loader2, Plus, RefreshCw, ChevronDown
+  Search, Film, User, LogOut, Loader2, Plus, RefreshCw, ChevronDown, Clapperboard, Globe
 } from 'lucide-react';
 
 const getCanonicalLanguage = (rawLang: string | undefined): string => {
@@ -31,7 +31,7 @@ const getCanonicalLanguage = (rawLang: string | undefined): string => {
 };
 
 export default function App() {
-  const [appLanguage, setAppLanguage] = useState<AppLanguage>('pt');
+  const [appLanguage, setAppLanguage] = useState<AppLanguage>('en'); // Default to English
   const [viewMode, setViewMode] = useState<'image' | 'text'>('image');
   const [databaseMovies, setDatabaseMovies] = useState<Movie[]>([]); 
   const [isLoading, setIsLoading] = useState(true);
@@ -64,7 +64,7 @@ export default function App() {
     selectedTop30: null
   });
 
-  const t = APP_TRANSLATIONS[appLanguage] || APP_TRANSLATIONS['pt'];
+  const t = APP_TRANSLATIONS[appLanguage] || APP_TRANSLATIONS['en'];
 
   const isFiltering = useMemo(() => {
     return !!(filters.searchQuery || filters.selectedGenre || filters.selectedLanguage || filters.selectedYear || filters.selectedDecade || filters.selectedRating || filters.selectedColor || filters.selectedTheme || filters.selectedDuration || filters.hasSubtitles !== null || filters.selectedDirector || filters.selectedAward || filters.hasPosterOnly || filters.selectedTop30);
@@ -171,13 +171,30 @@ export default function App() {
           <a className="navbar-brand fw-bold text-danger d-flex align-items-center gap-2" href="#" onClick={() => setFilters({searchQuery: '', selectedGenre: null, selectedLanguage: null, selectedYear: null, selectedDecade: null, selectedRating: null, selectedColor: null, selectedTheme: null, selectedSource: null, selectedDuration: null, hasSubtitles: null, selectedDirector: null, selectedAward: null, hasPosterOnly: false, selectedTop30: null})}>
             <Film size={26} /> <span>CLASSICFLIX</span>
           </a>
+          
           <div className="d-flex flex-grow-1 mx-4 max-w-lg position-relative">
             <input className="form-control bg-dark text-white border-secondary rounded ps-4 shadow-sm" placeholder={t.searchPlaceholder} value={filters.searchQuery} onChange={e => setFilters({...filters, searchQuery: e.target.value})} />
             <Search className="position-absolute end-0 top-50 translate-middle-y me-3 text-secondary" size={18} />
           </div>
+
           <div className="d-flex gap-2 align-items-center">
+            {/* Language Selection Menu */}
+            <div className="dropdown me-1">
+              <button className="btn btn-dark btn-sm dropdown-toggle border-secondary d-flex align-items-center gap-2" data-bs-toggle="dropdown">
+                <Globe size={16} className="text-info" /> <span className="d-none d-sm-inline">{appLanguage.toUpperCase()}</span>
+              </button>
+              <ul className="dropdown-menu dropdown-menu-dark dropdown-menu-end shadow border-secondary">
+                 <li><button className="dropdown-item py-2" onClick={() => setAppLanguage('en')}>🇺🇸 English</button></li>
+                 <li><button className="dropdown-item py-2" onClick={() => setAppLanguage('pt')}>🇧🇷 Português</button></li>
+                 <li><button className="dropdown-item py-2" onClick={() => setAppLanguage('it')}>🇮🇹 Italiano</button></li>
+                 <li><button className="dropdown-item py-2" onClick={() => setAppLanguage('hi')}>🇮🇳 हिन्दी</button></li>
+                 <li><button className="dropdown-item py-2" onClick={() => setAppLanguage('ru')}>🇷🇺 Русский</button></li>
+              </ul>
+            </div>
+
             <button className="btn btn-outline-success btn-sm d-flex align-items-center gap-1" onClick={() => setShowAddModal(true)}><Plus size={16} /><span className="d-none d-lg-inline">{t.addMovie}</span></button>
             <button className="btn btn-outline-primary btn-sm" onClick={refreshData}><RefreshCw size={16} /></button>
+            
             {user ? (
               <div className="dropdown">
                 <button className="btn btn-dark dropdown-toggle border-secondary" data-bs-toggle="dropdown"><User size={18} className="text-danger" /> {user.email.split('@')[0]}</button>
@@ -193,24 +210,37 @@ export default function App() {
       <main className="flex-grow-1">
         <FilterBar filters={filters} setFilters={setFilters} appLanguage={appLanguage} t={t} uniqueDirectors={uniqueDirectors} uniqueAwards={uniqueAwards} viewMode={viewMode} setViewMode={setViewMode} languageCounts={stats.lang} genreCounts={stats.gen} themeCounts={stats.th} />
         <div className="container-fluid p-4">
-          {isLoading ? <div className="text-center py-5"><Loader2 className="animate-spin text-danger mx-auto" size={50} /></div> : (
+          {isLoading ? (
+            <div className="text-center py-5"><Loader2 className="animate-spin text-danger mx-auto" size={50} /></div>
+          ) : !isFiltering ? (
+            /* Tela inicial sem cards - Boas Vindas */
+            <div className="text-center py-5 my-5 animate-in">
+              <Clapperboard size={64} className="text-danger mb-4 opacity-75 mx-auto" />
+              <h2 className="fw-bold mb-3">{t.welcomeTitle || "Welcome to ClassicFlix"}</h2>
+              <p className="text-secondary lead mx-auto" style={{ maxWidth: '600px' }}>
+                {t.welcomeText || "Explore the golden age of cinema in public domain. To start, use the search bar or pick a filter."}
+              </p>
+            </div>
+          ) : (
+            /* Conteúdo filtrado/pesquisado */
             <>
-              <div className="row row-cols-2 row-cols-md-4 row-cols-lg-6 g-3">
+              <div className="row row-cols-3 row-cols-sm-4 row-cols-md-6 row-cols-lg-8 row-cols-xl-10 g-2">
                 {displayedMovies.map(movie => <MovieCard key={movie.id} movie={movie} state={getState(movie.id)} onOpen={() => setSelectedMovie(movie)} viewMode={viewMode} />)}
               </div>
               {visibleCount < filteredMovies.length && (
                 <div className="text-center mt-5 mb-3">
-                  <button className="btn btn-outline-light px-5 py-2" onClick={() => setVisibleCount(v => v + 48)}><ChevronDown size={20} /> Carregar Mais</button>
+                  <button className="btn btn-outline-light px-5 py-2" onClick={() => setVisibleCount(v => v + 48)}><ChevronDown size={20} /> {t.loadMore || "Load More"}</button>
                 </div>
               )}
-              {filteredMovies.length === 0 && <div className="text-center py-5 opacity-50"><Film size={48} className="mb-3 mx-auto" /><h5>Nenhum título encontrado.</h5></div>}
+              {filteredMovies.length === 0 && <div className="text-center py-5 opacity-50"><Film size={48} className="mb-3 mx-auto" /><h5>{t.noTitlesFound || "No titles found."}</h5></div>}
             </>
           )}
         </div>
       </main>
       <footer className="bg-surface border-top border-secondary p-5 mt-5 text-center shadow">
         <h5 className="fw-bold mb-3 text-danger">CLASSICFLIX</h5>
-        <p className="text-secondary small">{t.footerText}</p>
+        <p className="text-secondary small mb-2">{t.footerText}</p>
+        <p className="text-white-50 small m-0 fw-bold">{t.totalMovies}: {databaseMovies.length}</p>
       </footer>
       <AiConcierge catalog={databaseMovies} language={appLanguage} />
       <AppModals showAddModal={showAddModal} setShowAddModal={setShowAddModal} selectedMovie={selectedMovie} setSelectedMovie={setSelectedMovie} appLanguage={appLanguage} getState={getState} onToggleInteraction={toggleList} showAuthModal={showAuthModal} setShowAuthModal={setShowAuthModal} authMode={authMode} setAuthMode={setAuthMode} authUsername={authUsername} setAuthUsername={setAuthUsername} authPassword={authPassword} setAuthPassword={setAuthPassword} handleAuth={handleAuth} authLoading={authLoading} onRefresh={refreshData} t={t} />
