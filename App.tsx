@@ -447,7 +447,8 @@ export default function App() {
         <div className="container text-center">
             <Film size={36} className="text-danger mb-3 mx-auto" />
             <h5 className="fw-bold mb-3" style={{letterSpacing: '2px'}}>CLASSICFLIX</h5>
-            <p className="text-secondary small max-w-lg mx-auto mb-4">{t.footerText}</p>
+            <p className="text-secondary small max-w-lg mx-auto mb-2">{t.footerText}</p>
+            <p className="text-white-50 small mb-0">{t.totalMovies}: {(databaseMovies || []).length}</p>
         </div>
       </footer>
 

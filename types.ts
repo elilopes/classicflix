@@ -20,6 +20,7 @@ export interface Movie {
   rating: string;
   duration: string;
   director: string;
+  directorId?: string; // New: Wikidata QID for the director
   type: 'Movie' | 'Series';
   sourceLabel?: string;
   cast?: string[];

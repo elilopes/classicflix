@@ -6,7 +6,9 @@
 
 export interface WikidataEditPayload {
     qid: string;
-    data: Record<string, string>; // Key is Property (e.g., P345), Value is the value
+    claims?: Record<string, string>; // Key is Property (e.g., P345), Value is the value
+    description?: string;
+    language?: string;
 }
 
 export const sendEditToBackend = async (backendUrl: string, payload: WikidataEditPayload) => {

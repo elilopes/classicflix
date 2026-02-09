@@ -8,11 +8,11 @@ import {
   CheckCircle, AlertTriangle, MonitorPlay, Info, Youtube, User,
   Lightbulb, Link as LinkIcon, Book, Database, ExternalLink,
   BrainCircuit, MessageSquareQuote, Server, MapPin, Building,
-  Paintbrush, Clapperboard, Briefcase, FileText
+  Paintbrush, Clapperboard, Briefcase, FileText, Award
 } from 'lucide-react';
 import { Movie, AppLanguage, UserMovieInteraction } from '../types';
 import { updateSupabaseMovie } from '../services/supabaseClient';
-import { fetchMovieImages } from '../services/wikidataService';
+import { fetchMovieImages, fetchMovieByQid } from '../services/wikidataService';
 import { getAggregatedMovieDetails, AggregatedMovieDetails } from '../services/movieDetailsService';
 import { generateMovieTrivia, generateCriticalAnalysis, generateCriticsSummary } from '../services/geminiService';
 import { fetchRottenTomatoesData, RTResult } from '../services/rottenTomatoesService';
@@ -93,18 +93,32 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
   const [rtData, setRtData] = useState<RTResult | null>(null);
   const [isLoadingCritics, setIsLoadingCritics] = useState(false);
 
+  // Director QID state
+  const [directorQid, setDirectorQid] = useState<string | null>(movie.directorId || null);
+
   // Replit Backend State
-  const [backendUrl, setBackendUrl] = useState('');
+  const [backendUrl, setBackendUrl] = useState(() => {
+      if (typeof window !== 'undefined') {
+          return localStorage.getItem('classicflix_backend_url') || '';
+      }
+      return '';
+  });
   const [isSavingToWikidata, setIsSavingToWikidata] = useState(false);
 
-  // Edit Form State
+  // Edit Form State - Fully synced with DB fields
   const [formData, setFormData] = useState({
     genres: Array.isArray(movie.genres) ? movie.genres.join(', ') : '',
     themes: Array.isArray(movie.themes) ? (movie.themes || []).join(', ') : '',
     videoUrl: movie.videoUrl || '',
     wikidataId: movie.wikidataId || '',
     title: movie.title,
-    description: movie.description
+    description: movie.description,
+    posterUrl: movie.posterUrl || '',
+    year: movie.year || '',
+    director: movie.director || '',
+    duration: movie.duration || '',
+    awards: Array.isArray(movie.awards) ? movie.awards.join(', ') : '',
+    language: movie.language || ''
   });
 
   useEffect(() => {
@@ -117,7 +131,21 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
       setIsLoadingGallery(false);
     };
     loadGallery();
+
+    // Try to fetch Director QID if not present
+    if (movie.wikidataId && !movie.directorId) {
+        fetchMovieByQid(movie.wikidataId).then(m => {
+             if (m && m.directorId) setDirectorQid(m.directorId);
+        });
+    }
   }, [movie]);
+
+  // Persist Backend URL changes
+  useEffect(() => {
+      if (backendUrl) {
+          localStorage.setItem('classicflix_backend_url', backendUrl);
+      }
+  }, [backendUrl]);
 
   const handleOpenInfo = async () => {
     setShowInfoModal(true);
@@ -202,10 +230,16 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
       const updates = {
         genres: formData.genres.split(',').map(s => s.trim()).filter(Boolean),
         themes: formData.themes.split(',').map(s => s.trim()).filter(Boolean),
+        awards: formData.awards.split(',').map(s => s.trim()).filter(Boolean),
         videoUrl: formData.videoUrl,
         wikidataId: formData.wikidataId,
         title: formData.title,
-        description: formData.description
+        description: formData.description,
+        posterUrl: formData.posterUrl,
+        year: formData.year,
+        director: formData.director,
+        duration: formData.duration,
+        language: formData.language
       };
 
       await updateSupabaseMovie(movie.id, movie.wikidataId, updates);
@@ -231,10 +265,21 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
 
       setIsSavingToWikidata(true);
       try {
-          // Prepare payload (Example: adding IMDb ID if stored in wikidataId field temporarily, or just testing)
+          // Prepare payload conforming to WikidataEditPayload interface
+          // We map the form fields to Wikidata Properties (Claims)
           const payload = {
               qid: formData.wikidataId,
-              data: {}
+              description: formData.description, // Sent separately as description
+              claims: {
+                  P1476: formData.title, // Title
+                  P921: formData.themes, // Main subject
+                  P136: formData.genres, // Genre
+                  P18: formData.posterUrl, // Image
+                  P577: String(formData.year), // Publication date
+                  P57: formData.director, // Director
+                  P2047: formData.duration, // Duration
+                  P1657: formData.awards // Awards
+              }
           };
 
           const result = await sendEditToBackend(backendUrl, payload);
@@ -297,8 +342,7 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
   const finalCast = (displayDetails.cast && displayDetails.cast.length > 0) ? displayDetails.cast : (movie.cast || []);
   const finalCinematographers = (displayDetails.cinematographers && displayDetails.cinematographers.length > 0) ? displayDetails.cinematographers : (movie.cinematographers || []);
   const finalComposers = (displayDetails.composers && displayDetails.composers.length > 0) ? displayDetails.composers : (movie.composers || []);
-  const finalThemes = (displayDetails.themes && displayDetails.themes.length > 0) ? displayDetails.themes : (movie.themes || []);
-
+  
   const renderList = (items: string[] | undefined, fallback = "N/A") => {
       if (!items || items.length === 0) return <span className="text-white-50 small">{fallback}</span>;
       return (
@@ -360,17 +404,48 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
               <div className="col-lg-8">
                 {isEditingTags ? (
                    <div className="bg-dark bg-opacity-50 p-4 rounded border border-secondary mb-4">
-                      {/* ... (Existing Editing UI kept as is) ... */}
                       <h5 className="text-primary-custom mb-3 d-flex align-items-center gap-2"><Edit3 size={18} /> Editar Metadados</h5>
+                      
                       <div className="row g-3">
+                        {/* Title & Description */}
                         <div className="col-12">
                             <label className="form-label text-white-50 small">Título</label>
                             <input type="text" className="form-control bg-black text-white border-secondary" value={formData.title} onChange={e => setFormData({...formData, title: e.target.value})} />
                         </div>
-                         <div className="col-12">
+                        <div className="col-12">
                             <label className="form-label text-white-50 small">Descrição</label>
                             <textarea className="form-control bg-black text-white border-secondary" rows={3} value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} />
                         </div>
+
+                        {/* Technical Details */}
+                        <div className="col-md-4">
+                            <label className="form-label text-white-50 small">Ano</label>
+                            <input type="number" className="form-control bg-black text-white border-secondary" value={formData.year} onChange={e => setFormData({...formData, year: parseInt(e.target.value) || 0})} />
+                        </div>
+                        <div className="col-md-4">
+                            <label className="form-label text-white-50 small">Duração</label>
+                            <input type="text" className="form-control bg-black text-white border-secondary" value={formData.duration} onChange={e => setFormData({...formData, duration: e.target.value})} placeholder="ex: 1h 30m"/>
+                        </div>
+                        <div className="col-md-4">
+                            <label className="form-label text-white-50 small">Idioma</label>
+                            <input type="text" className="form-control bg-black text-white border-secondary" value={formData.language} onChange={e => setFormData({...formData, language: e.target.value})} />
+                        </div>
+
+                        {/* People */}
+                        <div className="col-12">
+                            <label className="form-label text-white-50 small">Diretor</label>
+                            <div className="input-group">
+                                <span className="input-group-text bg-secondary border-secondary text-white"><User size={14} /></span>
+                                <input type="text" className="form-control bg-black text-white border-secondary" value={formData.director} onChange={e => setFormData({...formData, director: e.target.value})} />
+                                {directorQid && (
+                                    <span className="input-group-text bg-dark border-secondary text-white-50 font-monospace small" title="Wikidata ID do Diretor">
+                                        {directorQid}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Taxonomy */}
                         <div className="col-md-6">
                             <label className="form-label text-white-50 small">Gêneros (sep. por vírgula)</label>
                             <input type="text" className="form-control bg-black text-white border-secondary" value={formData.genres} onChange={e => setFormData({...formData, genres: e.target.value})} />
@@ -380,6 +455,23 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
                             <input type="text" className="form-control bg-black text-white border-secondary" value={formData.themes} onChange={e => setFormData({...formData, themes: e.target.value})} />
                         </div>
                         
+                        {/* Media Links & IDs */}
+                        <div className="col-12">
+                            <label className="form-label text-white-50 small">Poster URL (P18)</label>
+                            <div className="input-group">
+                                <span className="input-group-text bg-secondary border-secondary text-white"><ImageIcon size={14} /></span>
+                                <input type="text" className="form-control bg-black text-white border-secondary" value={formData.posterUrl} onChange={e => setFormData({...formData, posterUrl: e.target.value})} />
+                            </div>
+                        </div>
+
+                        <div className="col-12">
+                            <label className="form-label text-white-50 small">Prêmios (sep. por vírgula)</label>
+                            <div className="input-group">
+                                <span className="input-group-text bg-secondary border-secondary text-white"><Award size={14} /></span>
+                                <input type="text" className="form-control bg-black text-white border-secondary" value={formData.awards} onChange={e => setFormData({...formData, awards: e.target.value})} />
+                            </div>
+                        </div>
+
                         <div className="col-12">
                             <label className="form-label text-white-50 small">Wikidata ID (QID)</label>
                             <div className="input-group">

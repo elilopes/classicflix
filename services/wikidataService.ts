@@ -112,7 +112,7 @@ export const fetchMovieByQid = async (qid: string): Promise<Partial<Movie> | nul
     if (!cleanQid.startsWith('Q')) return null;
 
     const sparql = `
-      SELECT ?itemLabel ?description ?image ?directorLabel ?pubDate ?duration ?typeLabel ?iaId 
+      SELECT ?itemLabel ?description ?image ?director ?directorLabel ?pubDate ?duration ?typeLabel ?iaId 
         (GROUP_CONCAT(DISTINCT ?castLabel; SEPARATOR="|") AS ?castList)
         (GROUP_CONCAT(DISTINCT ?composerLabel; SEPARATOR="|") AS ?composerList)
         (GROUP_CONCAT(DISTINCT ?dopLabel; SEPARATOR="|") AS ?dopList)
@@ -133,7 +133,7 @@ export const fetchMovieByQid = async (qid: string): Promise<Partial<Movie> | nul
         OPTIONAL { ?item wdt:P344 ?dopItem. ?dopItem rdfs:label ?dopLabel. FILTER(LANG(?dopLabel) = "en") }
         OPTIONAL { ?item wdt:P921 ?subItem. ?subItem rdfs:label ?subjectLabel. FILTER(LANG(?subjectLabel) = "en") }
         OPTIONAL { ?item wdt:P136 ?genreItem. ?genreItem rdfs:label ?genreLabel. FILTER(LANG(?genreLabel) = "en") }
-      } GROUP BY ?itemLabel ?description ?image ?directorLabel ?pubDate ?duration ?typeLabel ?iaId
+      } GROUP BY ?itemLabel ?description ?image ?director ?directorLabel ?pubDate ?duration ?typeLabel ?iaId
     `;
 
     const data = await executeSparqlQuery(sparql);
@@ -141,6 +141,13 @@ export const fetchMovieByQid = async (qid: string): Promise<Partial<Movie> | nul
 
     const b = data.results.bindings[0];
     const year = b.pubDate ? new Date(b.pubDate.value).getFullYear() : new Date().getFullYear();
+    
+    // Extract Director QID from URI (e.g., http://www.wikidata.org/entity/Q123 -> Q123)
+    let directorId = "";
+    if (b.director && b.director.value) {
+        const parts = b.director.value.split('/');
+        directorId = parts[parts.length - 1];
+    }
     
     // Use the thumbnail helper for the poster
     const posterUrl = b.image ? getWikimediaThumbnail(b.image.value, 600) : "";
@@ -151,6 +158,7 @@ export const fetchMovieByQid = async (qid: string): Promise<Partial<Movie> | nul
         description: b.description?.value || "",
         posterUrl: posterUrl,
         director: b.directorLabel?.value || "Unknown",
+        directorId: directorId, // Return the QID
         year: year,
         duration: b.duration ? `${Math.floor(Number(b.duration.value))}m` : "",
         type: b.typeLabel?.value === "Series" ? "Series" : "Movie",
