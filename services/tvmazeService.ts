@@ -16,7 +16,7 @@ export const searchTvMaze = async (query: string): Promise<Partial<Movie>[]> => 
 
         if (!data || !Array.isArray(data)) return [];
 
-        return data.map((item: any) => {
+        const results = data.map((item: any) => {
             const show = item.show;
             return {
                 id: `tvmaze-${show.id}`,
@@ -34,6 +34,7 @@ export const searchTvMaze = async (query: string): Promise<Partial<Movie>[]> => 
                 videoUrl: show.officialSite || ""
             };
         });
+        return Array.from(new Map(results.map((item: any) => [item.id, item])).values());
     } catch (error) {
         console.error("TVMaze Search Error:", error);
         return [];

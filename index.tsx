@@ -1,12 +1,24 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
+import { Buffer } from 'buffer';
+import process from 'process';
 
-// 1. Polyfill process for browser environments (Prevents "process is not defined" crash)
-// @ts-ignore
-if (typeof window !== 'undefined' && typeof window.process === 'undefined') {
+// 1. Polyfill Node.js globals for browser environments
+if (typeof window !== 'undefined') {
   // @ts-ignore
-  window.process = { env: {} };
+  window.global = window;
+  // @ts-ignore
+  window.Buffer = Buffer;
+  // @ts-ignore
+  if (!window.process) {
+    window.process = process;
+  } else {
+    // Merge process.env if it already exists, but keep the full process object
+    const existingEnv = window.process.env || {};
+    window.process = process;
+    window.process.env = { ...process.env, ...existingEnv };
+  }
 }
 
 // 2. Global Error Handler for crashes outside React

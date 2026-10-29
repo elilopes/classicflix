@@ -6,10 +6,10 @@
 -- NOTE: Ensure db_seed.sql is run first to create 'legacy_movies_sink' view
 
 INSERT INTO public.legacy_movies_sink (
-    "id", "title", "titlePt", "originalTitle", 
-    "description", "descriptionPt", "descriptionHi", "descriptionRu", "descriptionIt",
-    "genres", "year", "language", "hasSubtitles", 
-    "posterUrl", "videoUrl", "trailerUrl", "rating", "duration", 
+    "id", "title", "titlept", "originaltitle", 
+    "description", "descriptionpt", "descriptionhi", "descriptionru", "descriptionit",
+    "genres", "year", "language", "hassubtitles", 
+    "posterurl", "videourl", "trailerurl", "rating", "duration", 
     "director", "type", "sourceLabel", "cast_members", "awards"
 ) VALUES 
 (

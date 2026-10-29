@@ -1,7 +1,8 @@
 
+/// <reference types="vite/client" />
 import { Movie } from '../types';
 
-const API_KEY = 'dc3946fe'; // Key provided by user
+const API_KEY = import.meta.env.VITE_OMDB_KEY || 'dc3946fe'; 
 const BASE_URL = 'https://www.omdbapi.com/';
 
 export const searchOmdbMovies = async (query: string): Promise<Partial<Movie>[]> => {
@@ -12,7 +13,7 @@ export const searchOmdbMovies = async (query: string): Promise<Partial<Movie>[]>
         if (data.Response === "False" || !data.Search) return [];
 
         // OMDb search results are limited, we map what we can
-        return data.Search.map((item: any) => ({
+        const results = data.Search.map((item: any) => ({
             id: `omdb-${item.imdbID}`,
             title: item.Title,
             year: parseInt(item.Year) || 0,
@@ -22,6 +23,7 @@ export const searchOmdbMovies = async (query: string): Promise<Partial<Movie>[]>
             // but for now we use ID. We will fetch details later.
             wikidataId: item.imdbID 
         }));
+        return Array.from(new Map(results.map((item: any) => [item.id, item])).values());
     } catch (error) {
         console.error("OMDb Search Error:", error);
         return [];

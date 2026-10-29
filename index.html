@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en" data-bs-theme="dark">
   <head>
@@ -12,41 +13,36 @@
     <!-- CRITICAL: Global Error Handler (Must be first script) -->
     <script>
       // 1. Polyfill process for libraries that expect it
-      window.process = { env: { NODE_ENV: 'development' } };
+      window.process = window.process || {};
+      window.process.env = window.process.env || {};
+      window.process.env.NODE_ENV = window.process.env.NODE_ENV || 'development';
 
       // 2. Error Display Logic
       function showCriticalError(title, detail) {
-        // Stop other scripts if possible
         window.stop();
-        
         const errorHtml = `
           <div style="position:fixed;top:0;left:0;width:100%;height:100%;background:#141414;color:white;z-index:99999;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:20px;font-family:sans-serif;">
             <h1 style="color:#e50914;margin-bottom:20px;font-size:24px;">${title}</h1>
-            <p style="color:#ccc;margin-bottom:20px;max-width:500px;">The application failed to load critical resources. This is likely a network issue or a browser compatibility problem.</p>
+            <p style="color:#ccc;margin-bottom:20px;max-width:500px;">The application failed to load critical resources.</p>
             <div style="background:#000;padding:15px;text-align:left;border-radius:4px;max-width:80%;width:600px;overflow:auto;border:1px solid #333;margin-bottom:20px;font-family:monospace;font-size:12px;color:#ff6b6b;">
               ${detail}
             </div>
             <button onclick="window.location.reload()" style="padding:12px 24px;background:#e50914;color:white;border:none;border-radius:4px;cursor:pointer;font-weight:bold;font-size:16px;">Reload Page</button>
           </div>
         `;
-        
-        // Write directly to body (handles cases where React root doesn't exist yet)
-        document.body ? (document.body.innerHTML = errorHtml) : (document.documentElement.innerHTML = '<body>' + errorHtml + '</body>');
+        document.body ? (document.body.innerHTML = errorHtml) : (document.documentElement.innerHTML = '<body>' + errorHtml + '<script type="module" src="/index.tsx"><\/script><\/body>');
       }
 
-      // 3. Catch Synchronous & Syntax Errors
       window.onerror = function(message, source, lineno, colno, error) {
         const detail = `Error: ${message}\nSource: ${source}:${lineno}`;
         console.error("Critical Error:", error || message);
         showCriticalError("Application Error", detail);
-        return true; // prevent default browser console error
+        return true;
       };
 
-      // 4. Catch Promise Rejections (e.g., Dynamic Import Failures)
       window.onunhandledrejection = function(event) {
         const detail = `Uncaught Promise: ${event.reason ? event.reason.toString() : 'Unknown Reason'}`;
         console.error("Unhandled Rejection:", event.reason);
-        // We only show the full red screen if it looks like a module loading error
         if (event.reason && (event.reason.toString().includes('Failed to fetch') || event.reason.toString().includes('Importing'))) {
              showCriticalError("Loading Error", detail);
         }
@@ -54,79 +50,99 @@
     </script>
 
     <style>
+      :root {
+        --md-surface: #1c1b1f;
+        --md-on-surface: #e6e1e5;
+        --md-primary: #d0bcff;
+        --md-secondary: #ccc2dc;
+        --md-tertiary: #efb8c8;
+        --md-error: #f2b8b5;
+        --md-outline: #938f99;
+        --md-surface-variant: #49454f;
+      }
+
       body {
         font-family: 'Inter', sans-serif;
-        background-color: #141414; /* Netflix dark background */
-        color: #fff;
+        background-color: #141218; /* Material Dark Background */
+        color: var(--md-on-surface);
         margin: 0;
       }
-      .bg-surface { background-color: #1a1a1a; }
-      .text-primary-custom { color: #e50914; }
-      .bg-primary-custom { background-color: #e50914; }
-      
-      /* Utilities */
-      .movie-card-compact {
-        background-color: #1f1f1f;
-        border: 1px solid #333;
-        transition: all 0.2s ease-in-out;
-        cursor: pointer;
-        padding: 0.75rem;
-        border-radius: 4px;
-        height: 100%;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-      }
-      .movie-card-compact:hover {
-        border-color: #e50914;
-        background-color: #2a2a2a;
-        transform: translateY(-2px);
-      }
-      
+
+      /* Material Design 3 Card Style */
       .movie-card {
         position: relative;
-        border-radius: 4px;
+        border-radius: 24px; /* Material 3 standard */
         overflow: hidden;
         cursor: pointer;
-        transition: transform 0.2s, box-shadow 0.2s;
+        transition: transform 0.3s cubic-bezier(0.2, 0, 0, 1), box-shadow 0.3s ease, border 0.3s ease, filter 0.3s ease;
         aspect-ratio: 2/3;
         background-size: cover;
         background-position: center;
-        background-color: #1f1f1f;
-        border: 1px solid #333;
+        background-color: var(--md-surface-variant);
+        border: 2px solid transparent;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.2);
       }
+
       .movie-card:hover {
-        transform: scale(1.05);
-        box-shadow: 0 10px 20px rgba(0,0,0,0.5);
+        transform: scale(1.08);
+        box-shadow: 0 0 20px 2px rgba(208, 188, 255, 0.5), 0 12px 32px rgba(0,0,0,0.7);
+        border: 2px solid var(--md-primary) !important;
+        filter: brightness(1.1);
         z-index: 10;
-        border-color: #e50914;
       }
+
       .movie-card-overlay {
         position: absolute;
         bottom: 0;
         left: 0;
         right: 0;
-        background: linear-gradient(to top, rgba(0,0,0,0.95), rgba(0,0,0,0.5), transparent);
+        background: linear-gradient(to top, rgba(28,27,31,0.9) 0%, transparent 100%);
         padding: 1rem;
         opacity: 0;
-        transition: opacity 0.2s;
+        transition: opacity 0.3s ease;
         height: 100%;
         display: flex;
         flex-direction: column;
         justify-content: flex-end;
       }
+
       .movie-card:hover .movie-card-overlay {
         opacity: 1;
+      }
+
+      /* Material Modal Style */
+      .modal-content-custom {
+        background-color: var(--md-surface);
+        border: none;
+        border-radius: 28px; /* Material 3 Modal standard */
+        box-shadow: 0 24px 48px rgba(0,0,0,0.5);
+        color: var(--md-on-surface);
+        overflow: hidden;
+      }
+
+      .btn-primary-material {
+        background-color: var(--md-primary);
+        color: #381e72;
+        border-radius: 100px;
+        padding: 10px 24px;
+        font-weight: 600;
+        border: none;
+        transition: all 0.2s ease;
+      }
+
+      .btn-primary-material:hover {
+        background-color: #e8def8;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.3);
       }
 
       .modal-hero {
         position: relative;
         width: 100%;
-        height: 450px;
+        height: 400px;
         background-size: cover;
         background-position: center top;
-        border-radius: 8px 8px 0 0;
       }
+
       .modal-hero::after {
         content: '';
         position: absolute;
@@ -134,34 +150,16 @@
         left: 0;
         width: 100%;
         height: 100%;
-        background: linear-gradient(to bottom, rgba(24,24,24,0.1) 0%, rgba(24,24,24,1) 100%);
-      }
-      .modal-hero-content {
-        position: absolute;
-        bottom: 30px;
-        left: 30px;
-        z-index: 2;
-        width: 90%;
+        background: linear-gradient(to bottom, transparent 0%, var(--md-surface) 100%);
       }
 
-      .custom-scrollbar::-webkit-scrollbar, ::-webkit-scrollbar {
-        width: 8px;
-        height: 8px;
+      .custom-scrollbar::-webkit-scrollbar {
+        width: 6px;
       }
-      .custom-scrollbar::-webkit-scrollbar-track, ::-webkit-scrollbar-track {
-        background: #141414;
+      .custom-scrollbar::-webkit-scrollbar-thumb {
+        background: var(--md-outline);
+        border-radius: 10px;
       }
-      .custom-scrollbar::-webkit-scrollbar-thumb, ::-webkit-scrollbar-thumb {
-        background: #333;
-        border-radius: 4px;
-      }
-      
-      .modal-content-custom {
-        background-color: #181818;
-        border: 1px solid #333;
-        border-radius: 8px;
-      }
-      .text-shadow { text-shadow: 2px 2px 4px rgba(0,0,0,0.8); }
     </style>
     <script type="importmap">
     {
@@ -172,15 +170,18 @@
         "react/": "https://esm.sh/react@^19.2.4/",
         "@google/genai": "https://esm.sh/@google/genai@^1.38.0",
         "lucide-react": "https://esm.sh/lucide-react@^0.563.0",
-        "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.43.2"
+        "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.43.2",
+        "jspdf": "https://esm.sh/jspdf@2.5.1",
+        "jspdf-autotable": "https://esm.sh/jspdf-autotable@3.8.2",
+        "framer-motion": "https://esm.sh/framer-motion@11.0.8"
       }
     }
     </script>
-  </head>
+  <link rel="stylesheet" href="/index.css">
+</head>
   <body>
     <div id="root"></div>
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-    <!-- Entry point script -->
     <script type="module" src="./index.tsx"></script>
   </body>
 </html>

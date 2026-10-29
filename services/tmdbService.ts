@@ -1,4 +1,5 @@
 
+/// <reference types="vite/client" />
 import { Movie } from '../types';
 
 // Helper to safely get env vars
@@ -14,9 +15,9 @@ const getEnv = (key: string) => {
 };
 
 // Use provided key as fallback
-const TMDB_API_KEY = getEnv('TMDB_API_KEY') || 'e6a44aa8865934c03ad582bc72c5b85d';
+const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY || 'e6a44aa8865934c03ad582bc72c5b85d';
 const BASE_URL = 'https://api.themoviedb.org/3';
-const IMAGE_BASE_URL = 'https://image.tmdb.org/t/p/w500';
+const IMAGE_BASE_URL = 'https://image.tmdb.org/t/p/w342';
 
 export const searchTmdbMovies = async (query: string, language: string = 'pt-BR'): Promise<Partial<Movie>[]> => {
     if (!TMDB_API_KEY) {
@@ -32,7 +33,7 @@ export const searchTmdbMovies = async (query: string, language: string = 'pt-BR'
 
         if (!data.results) return [];
 
-        return data.results.map((item: any) => ({
+        const results = data.results.map((item: any) => ({
             id: `tmdb-${item.id}`,
             title: item.title,
             originalTitle: item.original_title,
@@ -40,12 +41,13 @@ export const searchTmdbMovies = async (query: string, language: string = 'pt-BR'
             year: item.release_date ? new Date(item.release_date).getFullYear() : 0,
             posterUrl: item.poster_path ? `${IMAGE_BASE_URL}${item.poster_path}` : '',
             language: 'Portuguese', 
-            rating: item.vote_average ? item.vote_average.toFixed(1) : 'N/A',
+            rating: (item.vote_average !== undefined && item.vote_average !== null) ? item.vote_average.toFixed(1) : 'N/A',
             hasSubtitles: false,
             genres: [], 
             type: 'Movie',
             wikidataId: '' // Need details to get external IDs
         }));
+        return Array.from(new Map(results.map((item: any) => [item.id, item])).values());
     } catch (error) {
         console.error("TMDB Search Error:", error);
         return [];
@@ -83,7 +85,7 @@ export const getTmdbMovieDetails = async (tmdbId: string, language: string = 'pt
             year: data.release_date ? new Date(data.release_date).getFullYear() : 0,
             posterUrl: data.poster_path ? `${IMAGE_BASE_URL}${data.poster_path}` : '',
             language: 'Portuguese',
-            rating: data.vote_average ? data.vote_average.toFixed(1) : 'N/A',
+            rating: (data.vote_average !== undefined && data.vote_average !== null) ? data.vote_average.toFixed(1) : 'N/A',
             duration: data.runtime ? `${Math.floor(data.runtime / 60)}h ${data.runtime % 60}m` : '',
             director,
             cast,
@@ -112,7 +114,7 @@ export const getTmdbByImdbId = async (imdbId: string, language: string = 'pt-BR'
         const data = await response.json();
 
         // Check movie results
-        if (data.movie_results && data.movie_results.length > 0) {
+        if (data.movie_results && data.movie_results.length > 0 && data.movie_results[0].id) {
             return getTmdbMovieDetails(data.movie_results[0].id.toString(), language);
         }
         

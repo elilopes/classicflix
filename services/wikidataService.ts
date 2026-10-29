@@ -1,4 +1,3 @@
-
 import { Movie } from '../types';
 
 // Helper to force HTTPS on URLs
@@ -124,11 +123,23 @@ export const resolveWikimediaDirectUrl = async (url: string): Promise<string> =>
 };
 
 export const fetchMovieByQid = async (qid: string): Promise<Partial<Movie> | null> => {
-    const cleanQid = qid.trim().toUpperCase();
-    if (!cleanQid.startsWith('Q')) return null;
+    // Extract QID from URL if necessary
+    let cleanQid = qid.trim();
+    if (cleanQid.includes('wikidata.org/wiki/')) {
+        cleanQid = cleanQid.split('wikidata.org/wiki/').pop() || cleanQid;
+    } else if (cleanQid.includes('wikidata.org/entity/')) {
+        cleanQid = cleanQid.split('wikidata.org/entity/').pop() || cleanQid;
+    }
+    
+    cleanQid = cleanQid.split(/[?#]/)[0].toUpperCase();
+    
+    if (!cleanQid.startsWith('Q')) {
+        console.warn(`Invalid QID format: ${qid}`);
+        return null;
+    }
 
     const sparql = `
-      SELECT ?itemLabel ?description ?image ?director ?directorLabel ?pubDate ?duration ?typeLabel ?iaId 
+      SELECT ?itemLabel ?itemDescription ?image ?pubDate ?director ?directorLabel ?duration ?typeLabel ?iaId
         (GROUP_CONCAT(DISTINCT ?castLabel; SEPARATOR="|") AS ?castList)
         (GROUP_CONCAT(DISTINCT ?composerLabel; SEPARATOR="|") AS ?composerList)
         (GROUP_CONCAT(DISTINCT ?dopLabel; SEPARATOR="|") AS ?dopList)
@@ -136,27 +147,45 @@ export const fetchMovieByQid = async (qid: string): Promise<Partial<Movie> | nul
         (GROUP_CONCAT(DISTINCT ?genreLabel; SEPARATOR="|") AS ?genreList)
       WHERE {
         BIND(wd:${cleanQid} AS ?item)
-        OPTIONAL { ?item rdfs:label ?itemLabel. FILTER(LANG(?itemLabel) = "en") }
-        OPTIONAL { ?item schema:description ?description. FILTER(LANG(?description) = "en") }
         OPTIONAL { ?item wdt:P18 ?image. }
-        OPTIONAL { ?item wdt:P57 ?director. ?director rdfs:label ?directorLabel. FILTER(LANG(?directorLabel) = "en") }
+        OPTIONAL { ?item wdt:P57 ?director. }
         OPTIONAL { ?item wdt:P577 ?pubDate. }
         OPTIONAL { ?item wdt:P2047 ?duration. }
         OPTIONAL { ?item wdt:P724 ?iaId. }
-        OPTIONAL { ?item wdt:P31 ?type. BIND(IF(?type = wd:Q5398426, "Series", "Movie") AS ?typeLabel) }
-        OPTIONAL { ?item wdt:P161 ?castItem. ?castItem rdfs:label ?castLabel. FILTER(LANG(?castLabel) = "en") }
-        OPTIONAL { ?item wdt:P86 ?compItem. ?compItem rdfs:label ?composerLabel. FILTER(LANG(?composerLabel) = "en") }
-        OPTIONAL { ?item wdt:P344 ?dopItem. ?dopItem rdfs:label ?dopLabel. FILTER(LANG(?dopLabel) = "en") }
-        OPTIONAL { ?item wdt:P921 ?subItem. ?subItem rdfs:label ?subjectLabel. FILTER(LANG(?subjectLabel) = "en") }
-        OPTIONAL { ?item wdt:P136 ?genreItem. ?genreItem rdfs:label ?genreLabel. FILTER(LANG(?genreLabel) = "en") }
-      } GROUP BY ?itemLabel ?description ?image ?director ?directorLabel ?pubDate ?duration ?typeLabel ?iaId
+        OPTIONAL { ?item wdt:P31 ?type. }
+        OPTIONAL { ?item wdt:P161 ?cast. }
+        OPTIONAL { ?item wdt:P86 ?composer. }
+        OPTIONAL { ?item wdt:P344 ?dop. }
+        OPTIONAL { ?item wdt:P921 ?subject. }
+        OPTIONAL { ?item wdt:P136 ?genre. }
+        
+        SERVICE wikibase:label { 
+          bd:serviceParam wikibase:language "en,pt,es,fr".
+          ?item rdfs:label ?itemLabel .
+          ?item schema:description ?itemDescription .
+          ?director rdfs:label ?directorLabel .
+          ?type rdfs:label ?typeLabel .
+          ?cast rdfs:label ?castLabel .
+          ?composer rdfs:label ?composerLabel .
+          ?dop rdfs:label ?dopLabel .
+          ?subject rdfs:label ?subjectLabel .
+          ?genre rdfs:label ?genreLabel .
+        }
+      } GROUP BY ?itemLabel ?itemDescription ?image ?pubDate ?director ?directorLabel ?duration ?typeLabel ?iaId
+      LIMIT 1
     `;
 
     const data = await executeSparqlQuery(sparql);
     if (!data || !data.results || !data.results.bindings || !data.results.bindings[0]) return null;
 
     const b = data.results.bindings[0];
-    const year = b.pubDate ? new Date(b.pubDate.value).getFullYear() : new Date().getFullYear();
+    
+    // Robust year extraction (handles +1942-00-00 formats)
+    let year = new Date().getFullYear();
+    if (b.pubDate?.value) {
+        const match = b.pubDate.value.match(/\d{4}/);
+        if (match) year = parseInt(match[0]);
+    }
     
     // Extract Director QID from URI (e.g., http://www.wikidata.org/entity/Q123 -> Q123)
     let directorId = "";
@@ -171,7 +200,7 @@ export const fetchMovieByQid = async (qid: string): Promise<Partial<Movie> | nul
     return {
         wikidataId: cleanQid,
         title: b.itemLabel?.value || "",
-        description: b.description?.value || "",
+        description: b.itemDescription?.value || "",
         posterUrl: posterUrl,
         director: b.directorLabel?.value || "Unknown",
         directorId: directorId, // Return the QID
@@ -179,7 +208,7 @@ export const fetchMovieByQid = async (qid: string): Promise<Partial<Movie> | nul
         duration: b.duration ? `${Math.floor(Number(b.duration.value))}m` : "",
         type: b.typeLabel?.value === "Series" ? "Series" : "Movie",
         videoUrl: b.iaId ? `https://archive.org/download/${b.iaId.value}/${b.iaId.value}.mp4` : "",
-        cast: b.castList?.value ? b.castList.value.split('|').slice(0, 8) : [],
+        cast: b.castList?.value ? b.castList.value.split('|').slice(0, 25) : [],
         genres: b.genreList?.value ? b.genreList.value.split('|').slice(0, 3) : ["Drama"],
         themes: b.themeList?.value ? b.themeList.value.split('|').slice(0, 5) : [],
         cinematographers: b.dopList?.value ? b.dopList.value.split('|').slice(0, 2) : [],
@@ -187,9 +216,7 @@ export const fetchMovieByQid = async (qid: string): Promise<Partial<Movie> | nul
     };
 };
 
-/**
- * Fetches additional images for the movie gallery.
- */
+// Fetches additional images for the movie gallery.
 export const fetchMovieImages = async (query: string): Promise<string[]> => {
     const isQid = /^Q\d+$/.test(query);
     const safeQuery = query.replace(/"/g, '\\"');
@@ -246,10 +273,12 @@ export const fetchExtendedWikidataDetails = async (query: string): Promise<any> 
         `;
     }
 
+    // Consulta otimizada: Agrupamos apenas pelo ID do filme (?movie)
+    // Usamos SAMPLE para campos únicos e GROUP_CONCAT para listas
     const sparql = `
       SELECT 
-        ?originalTitle
-        ?colorLabel
+        (SAMPLE(?origTitle) AS ?originalTitle)
+        (SAMPLE(?clrLabel) AS ?colorLabel)
         (GROUP_CONCAT(DISTINCT ?castLabel; SEPARATOR="|") AS ?castList)
         (GROUP_CONCAT(DISTINCT ?composerLabel; SEPARATOR="|") AS ?composerList)
         (GROUP_CONCAT(DISTINCT ?dopLabel; SEPARATOR="|") AS ?dopList)
@@ -262,28 +291,32 @@ export const fetchExtendedWikidataDetails = async (query: string): Promise<any> 
       WHERE {
         { SELECT ?movie WHERE { ${movieSelector} } LIMIT 1 }
         
-        OPTIONAL { ?movie wdt:P1476 ?originalTitle. }
-        OPTIONAL { ?movie wdt:P462 ?color. ?color rdfs:label ?colorLabel. FILTER(LANG(?colorLabel) = "en") }
-        
-        { SELECT ?movie ?castLabel WHERE { ?movie wdt:P161 ?cast. SERVICE wikibase:label { bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en,pt". ?cast rdfs:label ?castLabel } } LIMIT 15 }
-        UNION
-        { SELECT ?movie ?composerLabel WHERE { ?movie wdt:P86 ?composer. SERVICE wikibase:label { bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en,pt". ?composer rdfs:label ?composerLabel } } LIMIT 3 }
-        UNION
-        { SELECT ?movie ?dopLabel WHERE { ?movie wdt:P344 ?dop. SERVICE wikibase:label { bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en,pt". ?dop rdfs:label ?dopLabel } } LIMIT 3 }
-        UNION
-        { SELECT ?movie ?subjectLabel WHERE { ?movie wdt:P921 ?subject. SERVICE wikibase:label { bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en,pt". ?subject rdfs:label ?subjectLabel } } LIMIT 5 }
-        UNION
-        { SELECT ?movie ?producerLabel WHERE { ?movie wdt:P162 ?producer. SERVICE wikibase:label { bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en,pt". ?producer rdfs:label ?producerLabel } } LIMIT 5 }
-        UNION
-        { SELECT ?movie ?countryLabel WHERE { ?movie wdt:P495 ?country. SERVICE wikibase:label { bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en,pt". ?country rdfs:label ?countryLabel } } LIMIT 3 }
-        UNION
-        { SELECT ?movie ?artDirLabel WHERE { ?movie wdt:P3174 ?artDir. SERVICE wikibase:label { bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en,pt". ?artDir rdfs:label ?artDirLabel } } LIMIT 3 }
-        UNION
-        { SELECT ?movie ?distribLabel WHERE { ?movie wdt:P750 ?distrib. SERVICE wikibase:label { bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en,pt". ?distrib rdfs:label ?distribLabel } } LIMIT 3 }
-        UNION
-        { SELECT ?movie ?basedOnLabel WHERE { { ?movie wdt:P144 ?basedOn. } UNION { ?movie wdt:P1877 ?basedOn. } SERVICE wikibase:label { bd:serviceParam wikibase:language "[AUTO_LANGUAGE],en,pt". ?basedOn rdfs:label ?basedOnLabel } } LIMIT 2 }
+        OPTIONAL { ?movie wdt:P1476 ?origTitle. }
+        OPTIONAL { ?movie wdt:P462 ?color. }
+        OPTIONAL { ?movie wdt:P161 ?cast. }
+        OPTIONAL { ?movie wdt:P86 ?comp. }
+        OPTIONAL { ?movie wdt:P344 ?dop. }
+        OPTIONAL { ?movie wdt:P921 ?sub. }
+        OPTIONAL { ?movie wdt:P162 ?prod. }
+        OPTIONAL { ?movie wdt:P495 ?ctry. }
+        OPTIONAL { ?movie wdt:P3174 ?art. }
+        OPTIONAL { ?movie wdt:P750 ?dist. }
+        OPTIONAL { { ?movie wdt:P144 ?based. } UNION { ?movie wdt:P1877 ?based. } }
 
-      } GROUP BY ?originalTitle ?colorLabel
+        SERVICE wikibase:label { 
+          bd:serviceParam wikibase:language "en,pt,es,fr". 
+          ?color rdfs:label ?clrLabel.
+          ?cast rdfs:label ?castLabel.
+          ?comp rdfs:label ?composerLabel.
+          ?dop rdfs:label ?dopLabel.
+          ?sub rdfs:label ?subjectLabel.
+          ?prod rdfs:label ?producerLabel.
+          ?ctry rdfs:label ?countryLabel.
+          ?art rdfs:label ?artDirLabel.
+          ?dist rdfs:label ?distribLabel.
+          ?based rdfs:label ?basedOnLabel.
+        }
+      } GROUP BY ?movie
     `;
 
     try {
@@ -293,7 +326,14 @@ export const fetchExtendedWikidataDetails = async (query: string): Promise<any> 
         }
 
         const b = data.results.bindings[0];
-        const split = (str: any) => str?.value ? str.value.split('|').filter(Boolean) : [];
+        
+        // Função auxiliar para limpar e limitar a 30 itens para não travar a UI
+        const split = (str: any) => {
+            if (!str?.value) return [];
+            return Array.from(new Set(str.value.split('|')))
+                .filter(Boolean)
+                .slice(0, 30); 
+        };
 
         return {
             originalTitle: b.originalTitle?.value || "",
@@ -309,6 +349,66 @@ export const fetchExtendedWikidataDetails = async (query: string): Promise<any> 
             basedOn: split(b.basedOnList)
         };
     } catch (e) {
+        console.error("Wikidata Extended Error:", e);
         return null;
+    }
+};
+
+/**
+ * Searches for public domain movies on Wikidata that are not likely in the database.
+ */
+export const findPublicDomainMovies = async (existingIds: string[] = []): Promise<Partial<Movie>[]> => {
+    const sparql = `
+      SELECT ?item ?itemLabel ?itemDescription ?image ?pubDate ?directorLabel ?iaId
+      WHERE {
+        ?item wdt:P31 wd:Q11424. # instance of movie
+        ?item wdt:P6216 wd:Q19652. # copyright status: public domain
+        OPTIONAL { ?item wdt:P18 ?image. }
+        OPTIONAL { ?item wdt:P57 ?director. ?director rdfs:label ?directorLabel. FILTER(LANG(?directorLabel) = "en") }
+        OPTIONAL { ?item wdt:P577 ?pubDate. }
+        OPTIONAL { ?item wdt:P724 ?iaId. } # Internet Archive ID
+        
+        SERVICE wikibase:label { bd:serviceParam wikibase:language "en,pt". }
+        
+        # Limit to items that have at least one or more "classic" signs
+        # (Internet Archive ID or older than 1970)
+        FILTER(BOUND(?iaId) || (xsd:integer(SUBSTR(STR(?pubDate), 1, 4)) < 1970))
+      }
+      ORDER BY DESC(?pubDate)
+      LIMIT 100
+    `;
+
+    try {
+        const data = await executeSparqlQuery(sparql);
+        if (!data || !data.results || !data.results.bindings) return [];
+        
+        const results = data.results.bindings
+            .map((b: any) => {
+                const qid = b.item.value.split('/').pop();
+                
+                // Robust year extraction
+                let year = 1900;
+                if (b.pubDate?.value) {
+                    const match = b.pubDate.value.match(/\d{4}/);
+                    if (match) year = parseInt(match[0]);
+                }
+
+                return {
+                    wikidataId: qid,
+                    title: b.itemLabel?.value || "Unknown",
+                    description: b.itemDescription?.value || "",
+                    year: year,
+                    director: b.directorLabel?.value || "Unknown",
+                    posterUrl: b.image ? getWikimediaThumbnail(b.image.value, 300) : "",
+                    videoUrl: b.iaId ? `https://archive.org/download/${b.iaId.value}/${b.iaId.value}.mp4` : ""
+                };
+            })
+            // Filter out existing ones
+            .filter((item: any) => !existingIds.includes(item.wikidataId));
+
+        return results;
+    } catch (e) {
+        console.error("Find Public Domain Movies Error:", e);
+        return [];
     }
 };

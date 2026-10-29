@@ -1,0 +1,61 @@
+{
+  "entities": {
+    "Review": {
+      "title": "Review",
+      "description": "A user review for a movie",
+      "type": "object",
+      "properties": {
+        "movieId": { "type": "string", "description": "The ID of the movie" },
+        "userId": { "type": "string", "description": "The ID of the user who wrote the review" },
+        "userName": { "type": "string", "description": "The name of the user" },
+        "userPhoto": { "type": "string", "description": "The photo URL of the user" },
+        "content": { "type": "string", "description": "The content of the review" },
+        "rating": { "type": "number", "description": "The rating given by the user" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "The time the review was created" }
+      },
+      "required": ["movieId", "userId", "userName", "content", "createdAt"]
+    },
+    "Reply": {
+      "title": "Reply",
+      "description": "A reply to a review",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "The ID of the user who wrote the reply" },
+        "userName": { "type": "string", "description": "The name of the user" },
+        "userPhoto": { "type": "string", "description": "The photo URL of the user" },
+        "content": { "type": "string", "description": "The content of the reply" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "The time the reply was created" }
+      },
+      "required": ["userId", "userName", "content", "createdAt"]
+    },
+    "QuizScore": {
+      "title": "QuizScore",
+      "description": "A user's score in the quiz",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "The ID of the user" },
+        "userName": { "type": "string", "description": "The name of the user" },
+        "userPhoto": { "type": "string", "description": "The photo URL of the user" },
+        "score": { "type": "number", "description": "The score achieved" },
+        "totalQuestions": { "type": "number", "description": "The total number of questions in the quiz" },
+        "movieTitle": { "type": "string", "description": "The title of the movie the quiz was about" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "The time the score was recorded" }
+      },
+      "required": ["userId", "userName", "score", "totalQuestions", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/reviews": {
+      "schema": "Review",
+      "description": "Collection of movie reviews"
+    },
+    "/reviews/{reviewId}/replies": {
+      "schema": "Reply",
+      "description": "Sub-collection of replies to a specific review"
+    },
+    "/quiz_scores": {
+      "schema": "QuizScore",
+      "description": "Collection of quiz scores for the leaderboard"
+    }
+  }
+}

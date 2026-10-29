@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { MessageSquare, X, Send, Loader2, Sparkles, Bot } from 'lucide-react';
 import { Movie } from '../types';
-import { createChatSession } from '../services/geminiService';
+import { createChatSession, ensureApiKey } from '../services/geminiService';
 import { Chat, GenerateContentResponse } from "@google/genai";
 
 interface AiConciergeProps {
@@ -51,6 +51,7 @@ export const AiConcierge: React.FC<AiConciergeProps> = ({ catalog, language }) =
         try {
             let chat = chatSession;
             if (!chat) {
+                await ensureApiKey();
                 chat = createChatSession(catalog, language);
                 setChatSession(chat);
             }
@@ -86,11 +87,11 @@ export const AiConcierge: React.FC<AiConciergeProps> = ({ catalog, language }) =
             {!isOpen && (
                 <button 
                     onClick={toggleOpen}
-                    className="btn btn-primary-custom rounded-circle p-3 shadow-lg hover-scale d-flex align-items-center justify-content-center"
-                    style={{ width: '60px', height: '60px' }}
-                    title="AI Concierge"
+                    className="position-fixed bg-transparent border-0 text-white hover-scale p-0 d-flex align-items-center justify-content-center"
+                    style={{ bottom: '2rem', right: '1.5rem', zIndex: 9999, filter: 'drop-shadow(0 4px 6px rgba(0,0,0,0.5))' }}
+                    title="Cine-Sage AI"
                 >
-                    <Bot size={28} />
+                    <Bot size={42} />
                 </button>
             )}
 
@@ -99,7 +100,7 @@ export const AiConcierge: React.FC<AiConciergeProps> = ({ catalog, language }) =
                     {/* Header */}
                     <div className="card-header bg-gradient-to-r from-primary-custom to-black border-bottom border-secondary d-flex justify-content-between align-items-center py-3">
                         <div className="d-flex align-items-center gap-2">
-                            <Sparkles size={18} className="text-warning" />
+                            <Bot size={18} className="text-warning" />
                             <h6 className="m-0 fw-bold text-white">Cine-Sage AI</h6>
                         </div>
                         <button onClick={toggleOpen} className="btn btn-sm btn-icon text-white-50 hover-text-white p-0">

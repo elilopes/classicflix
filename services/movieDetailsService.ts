@@ -4,6 +4,7 @@ import { getOmdbMovieDetails } from './omdbService';
 import { fetchExtendedWikidataDetails } from './wikidataService';
 import { getTvMazeByImdbId } from './tvmazeService';
 import { getTmdbByImdbId } from './tmdbService';
+import { getAggregatedMovieData, ExternalRatings } from './externalMovieService';
 
 export interface AggregatedMovieDetails {
     title: string;
@@ -28,18 +29,27 @@ export interface AggregatedMovieDetails {
     basedOn?: string[];
     color?: string;
     boxOffice?: string;
+    externalRatings?: ExternalRatings;
+    backdropUrl?: string;
 }
 
 /**
  * Aggregates data from multiple sources (Local DB, OMDb, Wikidata, TVMaze, TMDb)
  * to provide the most complete set of details possible.
  */
-export const getAggregatedMovieDetails = async (movie: Movie): Promise<AggregatedMovieDetails> => {
+export const getAggregatedMovieDetails = async (movie: Movie, language: string = 'en'): Promise<AggregatedMovieDetails> => {
+    // Determine local description based on language
+    let localDescription = movie.description;
+    if (language === 'pt' && movie.descriptionPt) localDescription = movie.descriptionPt;
+    else if (language === 'hi' && movie.descriptionHi) localDescription = movie.descriptionHi;
+    else if (language === 'ru' && movie.descriptionRu) localDescription = movie.descriptionRu;
+    else if (language === 'it' && movie.descriptionIt) localDescription = movie.descriptionIt;
+
     // 1. Start with Local Data (Supabase/JSON)
     const baseDetails: AggregatedMovieDetails = {
-        title: movie.title,
+        title: (language === 'pt' && movie.titlePt) ? movie.titlePt : movie.title,
         originalTitle: movie.originalTitle || movie.title,
-        description: movie.description || "",
+        description: localDescription || "",
         year: movie.year,
         posterUrl: movie.posterUrl,
         director: movie.director || "Unknown",
@@ -71,7 +81,7 @@ export const getAggregatedMovieDetails = async (movie: Movie): Promise<Aggregate
     // We check if wikidataId looks like 'tt1234567'
     if (movie.wikidataId && movie.wikidataId.startsWith('tt')) {
         promises.push(getTvMazeByImdbId(movie.wikidataId)); // Index 1
-        promises.push(getTmdbByImdbId(movie.wikidataId));   // Index 2
+        promises.push(getTmdbByImdbId(movie.wikidataId, language));   // Index 2
         promises.push(getOmdbMovieDetails(movie.wikidataId)); // Index 3
     } else {
         promises.push(Promise.resolve(null));
@@ -79,12 +89,16 @@ export const getAggregatedMovieDetails = async (movie: Movie): Promise<Aggregate
         promises.push(Promise.resolve(null));
     }
 
+    // 4. New External Aggregated Data (RapidAPI, OMDB, TMDB)
+    promises.push(getAggregatedMovieData(movie.title, movie.year?.toString() || '', language)); // Index 4
+
     try {
         const results = await Promise.all(promises);
         const wikiData = results[0];
         const tvMazeData = results[1];
         const tmdbData = results[2];
         const omdbData = results[3];
+        const externalData = results[4];
 
         // --- MERGE LOGIC ---
         // Helper to merge arrays
@@ -92,6 +106,16 @@ export const getAggregatedMovieDetails = async (movie: Movie): Promise<Aggregate
             if (!newItems || newItems.length === 0) return base || [];
             return Array.from(new Set([...(base || []), ...newItems])).slice(0, 10);
         };
+
+        // 0. EXTERNAL DATA MERGE (High Priority for Ratings/Images)
+        if (externalData) {
+            baseDetails.externalRatings = externalData.ratings;
+            if (externalData.posterPath && !baseDetails.posterUrl) baseDetails.posterUrl = externalData.posterPath;
+            if (externalData.backdropPath) baseDetails.backdropUrl = externalData.backdropPath;
+            if (externalData.overview && baseDetails.description.length < externalData.overview.length) {
+                baseDetails.description = externalData.overview;
+            }
+        }
 
         // 1. WIKIDATA MERGE
         if (wikiData) {

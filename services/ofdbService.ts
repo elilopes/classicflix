@@ -56,7 +56,8 @@ export const searchOfdb = async (query: string): Promise<Partial<Movie>[]> => {
             }
         });
 
-        return results.slice(0, 10); // Limit results
+        const uniqueResults = Array.from(new Map(results.map(item => [item.id, item])).values());
+        return uniqueResults.slice(0, 10); // Limit results
     } catch (error) {
         console.error("OFDb Search Error:", error);
         return [];

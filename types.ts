@@ -14,6 +14,7 @@ export interface Movie {
   year: number;
   language: string;
   hasSubtitles: boolean;
+  subtitleUrl?: string; // New field for external subtitle file
   posterUrl: string;
   videoUrl: string | null;
   trailerUrl?: string;
@@ -30,6 +31,20 @@ export interface Movie {
   composers?: string[];
   color?: 'Color' | 'Black & White' | 'Mixed';
   themes?: string[];
+  popularity?: number;
+  license?: string;
+  isIndependent?: boolean;
+  identifiers?: {
+    archiveId?: string;
+    imdbId?: string;
+    omdbId?: string;
+    openMdbId?: string;
+    ofdbId?: string;
+    googleKnowId?: string;
+    tmdbCompanyId?: string;
+    tmdbId?: string;
+    wikimediaCommons?: string;
+  };
 }
 
 export type DurationCategory = 'very_short' | 'short' | 'medium' | 'long' | 'giant';
@@ -49,15 +64,40 @@ export interface FilterState {
   selectedDirector: string | null;
   selectedAward: string | null;
   hasPosterOnly: boolean;
+  hasVideoOnly: boolean;
   selectedTop30: string | null;
 }
 
+export interface Review {
+  id: string;
+  wikidataid: string;
+  userid: string;
+  email: string;
+  rating: number; // 1-10
+  content: string;
+  created_at: string;
+  votes?: number;
+  replies?: Comment[];
+}
+
+export interface Comment {
+  id: string;
+  reviewid: string;
+  wikidataid: string;
+  userid: string;
+  email: string;
+  content: string;
+  created_at: string;
+  parent_id?: string; // For nested threads
+}
+
 export interface UserMovieInteraction {
-  movie_id: string;
-  is_favorite: boolean;
-  is_watched: boolean;
-  watch_later: boolean;
+  wikidataid: string;
+  isfavorite: boolean;
+  iswatched: boolean;
+  iswatchlist: boolean;
   progress_seconds: number;
+  lastupdated?: string;
 }
 
 export type AppLanguage = 'en' | 'pt' | 'it' | 'hi' | 'ru';

@@ -1,0 +1,75 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isDocOwner() {
+      return isAuthenticated() && request.auth.uid == resource.data.userId;
+    }
+    
+    function isValidReview(data) {
+      return data.movieId is string &&
+             data.userId is string &&
+             data.userName is string &&
+             data.content is string &&
+             data.content.size() > 0 &&
+             data.content.size() < 5000 &&
+             data.rating is number &&
+             data.rating >= 1 &&
+             data.rating <= 10;
+    }
+    
+    function isValidReply(data) {
+      return data.userId is string &&
+             data.userName is string &&
+             data.content is string &&
+             data.content.size() > 0 &&
+             data.content.size() < 2000;
+    }
+
+    function isValidQuizScore(data) {
+      return data.userId is string &&
+             data.userName is string &&
+             data.score is number &&
+             data.totalQuestions is number &&
+             data.createdAt is string;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+    
+    match /quiz_scores/{scoreId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && 
+                      request.resource.data.userId == request.auth.uid &&
+                      isValidQuizScore(request.resource.data);
+      allow update, delete: if false;
+    }
+
+    match /reviews/{reviewId} {
+      allow read: if true; // Publicly readable
+      allow create: if isAuthenticated() && 
+                      request.resource.data.userId == request.auth.uid &&
+                      isValidReview(request.resource.data);
+      allow update, delete: if isDocOwner();
+      
+      match /replies/{replyId} {
+        allow read: if true; // Publicly readable
+        allow create: if isAuthenticated() && 
+                        request.resource.data.userId == request.auth.uid &&
+                        isValidReply(request.resource.data);
+        allow update, delete: if isDocOwner();
+      }
+    }
+  }
+}
