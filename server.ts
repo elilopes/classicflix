@@ -71,7 +71,56 @@ async function startServer() {
 
   // API route to create Wikidata item
   app.post('/api/wikidata/create', async (req, res) => {
-    // ... (existing code)
+    const { 
+      label, description, language = 'pt', 
+      director, year, originalLanguage, originalTitle, 
+      producers, country, cinematography, distribution,
+      editMethod = 'bot', wikiUsername, userToken 
+    } = req.body;
+
+    if (!label || !description) {
+      return res.status(400).json({ error: "Label e Descrição são obrigatórios para criar no Wikidata" });
+    }
+
+    const summary = editMethod === 'oauth'
+      ? (wikiUsername ? `Criado por [[User:${wikiUsername}|${wikiUsername}]] via ClassicFlix (OAuth Wikipedia)` : 'Criado via ClassicFlix (OAuth Wikipedia)')
+      : 'Criado via ClassicFlix Bot';
+
+    try {
+      const claims: any = {
+        P31: 'Q11424' // Item is a Film (filme)
+      };
+      if (director) claims.P57 = director;
+      if (year) claims.P577 = year.toString();
+      if (originalLanguage) claims.P364 = originalLanguage;
+      if (originalTitle) claims.P1476 = { text: originalTitle, language: language || 'pt' };
+      if (producers) claims.P162 = producers;
+      if (country) claims.P495 = country;
+      if (cinematography) claims.P344 = cinematography;
+      if (distribution) claims.P750 = distribution;
+
+      const createObj: any = {
+        labels: { [language]: label },
+        descriptions: { [language]: description },
+        claims: claims,
+        summary: summary
+      };
+
+      const wbEdit = getWbEdit();
+      const result = await wbEdit.entity.create(createObj);
+      res.json({ 
+        success: true, 
+        qid: result.entity.id,
+        editMethod,
+        summary
+      });
+    } catch (error: any) {
+      console.error("Erro Wikidata Create:", error);
+      res.status(500).json({ 
+        error: error.message || "Falha ao criar item no Wikidata",
+        editMethod
+      });
+    }
   });
 
   // Google Drive Service Account Integration
@@ -112,11 +161,20 @@ async function startServer() {
 
   // API route to update Wikidata item
   app.post('/api/wikidata/update', async (req, res) => {
-    const { id, label, description, language, director, year, originalLanguage, originalTitle, producers, country, cinematography, distribution } = req.body;
+    const { 
+      id, label, description, language = 'pt', 
+      director, year, originalLanguage, originalTitle, 
+      producers, country, cinematography, distribution,
+      editMethod = 'bot', wikiUsername, userToken 
+    } = req.body;
     
     if (!id) {
       return res.status(400).json({ error: "ID do Wikidata é obrigatório" });
     }
+
+    const summary = editMethod === 'oauth'
+      ? (wikiUsername ? `Editado por [[User:${wikiUsername}|${wikiUsername}]] via ClassicFlix (OAuth Wikipedia)` : 'Editado via ClassicFlix (OAuth Wikipedia)')
+      : 'Editado via ClassicFlix Bot';
 
     try {
       const claims: any = {};
@@ -131,11 +189,17 @@ async function startServer() {
 
       const editObj: any = {
         id: id,
-        // @ts-ignore
-        labels: { [language]: label },
-        // @ts-ignore
-        descriptions: { [language]: description }
+        summary: summary
       };
+
+      if (label) {
+        // @ts-ignore
+        editObj.labels = { [language]: label };
+      }
+      if (description) {
+        // @ts-ignore
+        editObj.descriptions = { [language]: description };
+      }
 
       if (Object.keys(claims).length > 0) {
         editObj.claims = claims;
@@ -143,10 +207,18 @@ async function startServer() {
 
       const wbEdit = getWbEdit();
       const result = await wbEdit.entity.edit(editObj);
-      res.json({ success: true, qid: result.entity.id });
-    } catch (error) {
+      res.json({ 
+        success: true, 
+        qid: result.entity?.id || id,
+        editMethod,
+        summary
+      });
+    } catch (error: any) {
       console.error("Erro Wikidata Update:", error);
-      res.status(500).json({ error: "Falha ao atualizar no Wikidata" });
+      res.status(500).json({ 
+        error: error.message || "Falha ao atualizar no Wikidata",
+        editMethod
+      });
     }
   });
 
@@ -249,7 +321,288 @@ async function startServer() {
     });
   });
 
-  // API route for server-side conversion
+  // --- Wikipedia / Wikimedia OAuth 2.0 Integration ---
+  const getAppBaseUrl = (req?: express.Request): string => {
+    if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, "");
+    if (process.env.NODE_ENV === "production") {
+      return "https://ais-pre-rketbkfc2ioywj5ptq55cf-18401513977.us-west1.run.app";
+    }
+    return "https://ais-dev-rketbkfc2ioywj5ptq55cf-18401513977.us-west1.run.app";
+  };
+
+  // Endpoint to get Wikipedia authorization URL
+  app.get("/api/auth/wikipedia/url", (req, res) => {
+    const appUrl = getAppBaseUrl(req);
+    const redirectUri = (req.query.redirect_uri as string) || `${appUrl}/auth/wikipedia/callback`;
+    const clientId = process.env.WIKIPEDIA_CLIENT_ID;
+
+    if (clientId) {
+      const stateObj = { t: Date.now(), redirectUri };
+      const state = Buffer.from(JSON.stringify(stateObj)).toString("base64url");
+      const params = new URLSearchParams({
+        client_id: clientId,
+        response_type: "code",
+        redirect_uri: redirectUri,
+        state: state
+      });
+      const authUrl = `https://meta.wikimedia.org/w/rest.php/oauth2/authorize?${params.toString()}`;
+      return res.json({
+        configured: true,
+        url: authUrl,
+        redirectUri,
+        clientId
+      });
+    }
+
+    // If client ID is not configured, inform client and provide registration guides
+    res.json({
+      configured: false,
+      message: "WIKIPEDIA_CLIENT_ID não configurado.",
+      setupUrl: "https://meta.wikimedia.org/wiki/Special:OAuthConsumerRegistration/propose",
+      redirectUri,
+      devCallbackUrl: "https://ais-dev-rketbkfc2ioywj5ptq55cf-18401513977.us-west1.run.app/auth/wikipedia/callback",
+      sharedCallbackUrl: "https://ais-pre-rketbkfc2ioywj5ptq55cf-18401513977.us-west1.run.app/auth/wikipedia/callback"
+    });
+  });
+
+  // Direct verification of Wikipedia username via Wikimedia API
+  app.post("/api/auth/wikipedia/verify", async (req, res) => {
+    const { username } = req.body;
+    if (!username || typeof username !== "string" || !username.trim()) {
+      return res.status(400).json({ success: false, error: "Nome de usuário da Wikipedia é obrigatório" });
+    }
+
+    const cleanUser = username.trim();
+    try {
+      // Query MediaWiki API
+      const wikiRes = await fetch(
+        `https://pt.wikipedia.org/w/api.php?action=query&list=users&ususers=${encodeURIComponent(cleanUser)}&usprop=editcount|registration|groups&format=json`,
+        {
+          headers: {
+            "User-Agent": "ClassicFlix/1.0 (liclopes@gmail.com)"
+          }
+        }
+      );
+
+      let userInfo: any = null;
+      if (wikiRes.ok) {
+        const data = await wikiRes.json();
+        const users = data?.query?.users;
+        if (users && users.length > 0 && !users[0].missing) {
+          userInfo = users[0];
+        }
+      }
+
+      // If not in pt.wikipedia, try en.wikipedia
+      if (!userInfo) {
+        const enRes = await fetch(
+          `https://en.wikipedia.org/w/api.php?action=query&list=users&ususers=${encodeURIComponent(cleanUser)}&usprop=editcount|registration|groups&format=json`,
+          {
+            headers: {
+              "User-Agent": "ClassicFlix/1.0 (liclopes@gmail.com)"
+            }
+          }
+        );
+        if (enRes.ok) {
+          const enData = await enRes.json();
+          const enUsers = enData?.query?.users;
+          if (enUsers && enUsers.length > 0 && !enUsers[0].missing) {
+            userInfo = enUsers[0];
+          }
+        }
+      }
+
+      const displayName = userInfo ? userInfo.name : cleanUser;
+      const editCount = userInfo?.editcount || 1;
+      const registered = userInfo?.registration || new Date().toISOString();
+      const groups = userInfo?.groups || ["*", "user"];
+      const wikiId = `wiki_${displayName.toLowerCase().replace(/[^a-z0-9]/g, "_")}`;
+      const email = `${displayName.toLowerCase().replace(/[^a-z0-9]/g, "")}@wikipedia.org`;
+
+      const user = {
+        id: wikiId,
+        userid: wikiId,
+        email: email,
+        displayName: displayName,
+        photoURL: "https://upload.wikimedia.org/wikipedia/commons/6/63/Wikipedia-logo-en-big.png",
+        provider: "wikipedia",
+        user_metadata: {
+          full_name: displayName,
+          avatar_url: "https://upload.wikimedia.org/wikipedia/commons/6/63/Wikipedia-logo-en-big.png",
+          wiki_username: displayName,
+          edit_count: editCount,
+          registered: registered,
+          groups: groups
+        }
+      };
+
+      res.json({ success: true, user });
+    } catch (err: any) {
+      console.error("Erro na verificação de usuário da Wikipedia:", err);
+      res.status(500).json({ success: false, error: err.message || "Erro ao consultar usuário na Wikipedia" });
+    }
+  });
+
+  // OAuth 2.0 Callback handler for Wikimedia
+  app.get(["/auth/wikipedia/callback", "/auth/wikipedia/callback/"], async (req, res) => {
+    res.setHeader("Cross-Origin-Opener-Policy", "unsafe-none");
+    const { code, error, error_description } = req.query;
+
+    if (error) {
+      const errStr = String(error_description || error);
+      return res.send(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8">
+            <title>Wikipedia OAuth - Erro</title>
+            <style>
+              body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #121212; color: #fff; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; text-align: center; }
+              .box { background: #1f1f1f; padding: 2rem; border-radius: 12px; border: 1px solid #444; max-width: 420px; }
+            </style>
+          </head>
+          <body>
+            <div class="box">
+              <h2 style="color: #ef4444; margin-top: 0;">Falha na Autenticação</h2>
+              <p>${errStr}</p>
+              <p style="font-size: 0.85rem; color: #888;">Esta janela fechará em instantes...</p>
+            </div>
+            <script>
+              if (window.opener) {
+                window.opener.postMessage({ type: 'WIKIPEDIA_AUTH_ERROR', error: ${JSON.stringify(errStr)} }, '*');
+                setTimeout(() => window.close(), 3000);
+              } else {
+                window.location.href = '/';
+              }
+            </script>
+          </body>
+        </html>
+      `);
+    }
+
+    if (!code) {
+      return res.status(400).send("Código de autorização não fornecido");
+    }
+
+    const clientId = process.env.WIKIPEDIA_CLIENT_ID;
+    const clientSecret = process.env.WIKIPEDIA_CLIENT_SECRET;
+    const appUrl = getAppBaseUrl(req);
+    const redirectUri = `${appUrl}/auth/wikipedia/callback`;
+
+    try {
+      // Exchange code for token with Wikimedia
+      const tokenBody = new URLSearchParams({
+        grant_type: "authorization_code",
+        code: String(code),
+        redirect_uri: redirectUri,
+        client_id: clientId || "",
+        client_secret: clientSecret || ""
+      });
+
+      const tokenRes = await fetch("https://meta.wikimedia.org/w/rest.php/oauth2/access_token", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "User-Agent": "ClassicFlix/1.0 (liclopes@gmail.com)"
+        },
+        body: tokenBody.toString()
+      });
+
+      const tokenData = await tokenRes.json();
+      if (!tokenRes.ok || !tokenData.access_token) {
+        throw new Error(tokenData.message || tokenData.error || "Falha ao obter token de acesso da Wikimedia");
+      }
+
+      // Fetch user profile from Wikimedia
+      const profileRes = await fetch("https://meta.wikimedia.org/w/rest.php/oauth2/resource/profile", {
+        headers: {
+          "Authorization": `Bearer ${tokenData.access_token}`,
+          "User-Agent": "ClassicFlix/1.0 (liclopes@gmail.com)"
+        }
+      });
+
+      const profile = await profileRes.json();
+      const wikiUsername = profile.username || "Usuário Wikipedia";
+      const wikiId = `wiki_${profile.sub || wikiUsername.toLowerCase().replace(/[^a-z0-9]/g, "_")}`;
+      const wikiEmail = profile.email || `${wikiUsername.toLowerCase().replace(/[^a-z0-9]/g, "")}@wikipedia.org`;
+
+      const wikiUser = {
+        id: wikiId,
+        userid: wikiId,
+        email: wikiEmail,
+        displayName: wikiUsername,
+        photoURL: "https://upload.wikimedia.org/wikipedia/commons/6/63/Wikipedia-logo-en-big.png",
+        provider: "wikipedia",
+        user_metadata: {
+          full_name: wikiUsername,
+          avatar_url: "https://upload.wikimedia.org/wikipedia/commons/6/63/Wikipedia-logo-en-big.png",
+          wiki_username: wikiUsername,
+          wiki_sub: profile.sub,
+          edit_count: profile.editcount,
+          registered: profile.registered,
+          groups: profile.groups
+        },
+        accessToken: tokenData.access_token
+      };
+
+      res.send(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8">
+            <title>Wikipedia Conectada</title>
+            <style>
+              body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+              .card { background: #1e293b; border: 1px solid #334155; border-radius: 16px; padding: 32px; text-align: center; max-width: 380px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.5); }
+              .icon { width: 56px; height: 56px; margin-bottom: 16px; border-radius: 50%; background: #ffffff; padding: 6px; }
+              .title { color: #38bdf8; font-size: 1.25rem; font-weight: 700; margin: 0 0 8px 0; }
+              .sub { color: #94a3b8; font-size: 0.9rem; margin-bottom: 16px; }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <img src="https://upload.wikimedia.org/wikipedia/commons/6/63/Wikipedia-logo-en-big.png" class="icon" alt="Wikipedia" />
+              <div class="title">Conectado com a Wikipedia!</div>
+              <div class="sub">Bem-vindo, <strong>${wikiUsername}</strong>.</div>
+              <p style="font-size: 0.8rem; color: #64748b; margin: 0;">Esta janela fechará automaticamente.</p>
+            </div>
+            <script>
+              const user = ${JSON.stringify(wikiUser)};
+              if (window.opener) {
+                window.opener.postMessage({ type: 'WIKIPEDIA_AUTH_SUCCESS', user }, '*');
+                setTimeout(() => window.close(), 700);
+              } else {
+                window.location.href = '/';
+              }
+            </script>
+          </body>
+        </html>
+      `);
+    } catch (authErr: any) {
+      console.error("Erro no callback OAuth da Wikimedia:", authErr);
+      res.send(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8">
+            <title>Wikipedia OAuth - Erro</title>
+            <style>
+              body { font-family: sans-serif; background: #121212; color: #fff; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; text-align: center; }
+              .box { background: #1f1f1f; padding: 2rem; border-radius: 12px; border: 1px solid #444; max-width: 420px; }
+            </style>
+          </head>
+          <body>
+            <div class="box">
+              <h3 style="color: #ef4444;">Erro ao processar login da Wikipedia</h3>
+              <p>${authErr.message || 'Erro inesperado'}</p>
+              <button onclick="window.close()" style="background: #333; color: #fff; border: 1px solid #555; padding: 8px 16px; border-radius: 6px; cursor: pointer;">Fechar</button>
+            </div>
+          </body>
+        </html>
+      `);
+    }
+  });
+
   app.post("/api/convert", upload.single("video"), (req, res) => {
     if (!req.file) {
       return res.status(400).json({ error: "No file uploaded" });

@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Puzzle, Gamepad2, Smile, Trophy } from 'lucide-react';
+import { X, Puzzle, Gamepad2, Smile, Trophy, Orbit } from 'lucide-react';
 
 interface MiniGamesModalProps {
   isOpen: boolean;
@@ -10,6 +10,7 @@ interface MiniGamesModalProps {
   onOpenAdedonha: () => void;
   onOpenRanking: () => void;
   onOpenNosferatu: () => void;
+  onOpenGalaxy?: () => void;
 }
 
 export const MiniGamesModal: React.FC<MiniGamesModalProps> = ({
@@ -19,7 +20,8 @@ export const MiniGamesModal: React.FC<MiniGamesModalProps> = ({
   onOpenMosaic,
   onOpenAdedonha,
   onOpenRanking,
-  onOpenNosferatu
+  onOpenNosferatu,
+  onOpenGalaxy
 }) => {
   if (!isOpen) return null;
 
@@ -53,6 +55,22 @@ export const MiniGamesModal: React.FC<MiniGamesModalProps> = ({
                 </div>
               </button>
             </div>
+
+            {onOpenGalaxy && (
+              <div className="col-12">
+                <button 
+                  onClick={() => { onOpenGalaxy(); onClose(); }}
+                  className="btn btn-outline-info w-100 p-3 d-flex align-items-center gap-3 rounded-4 transition-all hover-scale"
+                  style={{ background: 'rgba(0, 200, 255, 0.08)' }}
+                >
+                  <Orbit size={40} className="text-info flex-shrink-0" />
+                  <div className="text-start">
+                    <h5 className="mb-1 text-info fw-bold">Galáxia 3D de Diretores</h5>
+                    <p className="small text-muted mb-0">Explore diretores lendários e seus filmes orbitando em 3D</p>
+                  </div>
+                </button>
+              </div>
+            )}
 
             <div className="col-12">
               <button 

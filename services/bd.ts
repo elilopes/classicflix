@@ -134,10 +134,38 @@ export const signInWithGoogle = async () => {
         return { data: { user: googleUser }, error: null };
     } catch (error: any) {
         if (error.code === 'auth/popup-closed-by-user' || error.message?.includes('popup-closed-by-user')) {
-            return { data: { user: null }, error: { message: "Login com Google cancelado (janela fechada pelo usuário)." } };
+            return { 
+                data: { user: null }, 
+                error: { 
+                    message: "Login com Google cancelado: A janela de autenticação foi fechada ou bloqueada pelo navegador. No ambiente iframe, certifique-se de permitir popups para este site e verificar se o domínio está adicionado em 'Domínios Autorizados' no Firebase Console." 
+                } 
+            };
         }
         console.error("Erro no login com Google OAuth 2:", error);
         return { data: { user: null }, error: { message: error.message || "Erro ao conectar com Google." } };
+    }
+};
+
+/**
+ * Realiza autenticação com Wikipedia / Wikimedia OAuth
+ */
+export const signInWithWikipedia = async (wikiUser: any) => {
+    try {
+        localStorage.setItem('classicflix_user', JSON.stringify(wikiUser));
+        try {
+            const sb = await getSupabase();
+            if (sb && wikiUser.email) {
+                await sb.from('users').upsert({
+                    userid: wikiUser.userid || wikiUser.id,
+                    email: wikiUser.email
+                }, { onConflict: 'userid' });
+            }
+        } catch (dbErr) {
+            console.warn("Aviso ao sincronizar usuário Wikipedia no banco:", dbErr);
+        }
+        return { data: { user: wikiUser }, error: null };
+    } catch (err: any) {
+        return { data: { user: null }, error: { message: err.message || 'Erro ao autenticar com Wikipedia' } };
     }
 };
 
@@ -157,7 +185,7 @@ export const signOutUser = async () => {
 };
 
 /**
- * Escuta mudanças reais de autenticação do Supabase e Firebase (Google OAuth)
+ * Escuta mudanças reais de autenticação do Supabase, Firebase (Google OAuth) e Wikipedia OAuth
  */
 export const subscribeToAuthChanges = async (callback: (user: any | null) => void) => {
     const sb = await getSupabase();
@@ -205,13 +233,33 @@ export const subscribeToAuthChanges = async (callback: (user: any | null) => voi
             if (session?.user) {
                 callback(session.user);
             } else {
-                // If not logged in via Supabase, check if Firebase has user
+                // If not logged in via Supabase, check if Firebase has user or Wikipedia is active
                 import('../firebase').then(({ auth }) => {
                     if (!auth.currentUser) {
-                        try { localStorage.removeItem('classicflix_user'); } catch (e) {}
+                        try {
+                            const stored = localStorage.getItem('classicflix_user');
+                            if (stored) {
+                                const parsed = JSON.parse(stored);
+                                if (parsed && parsed.provider === 'wikipedia') {
+                                    callback(parsed);
+                                    return;
+                                }
+                            }
+                            localStorage.removeItem('classicflix_user');
+                        } catch (e) {}
                         callback(null);
                     }
                 }).catch(() => {
+                    try {
+                        const stored = localStorage.getItem('classicflix_user');
+                        if (stored) {
+                            const parsed = JSON.parse(stored);
+                            if (parsed && parsed.provider === 'wikipedia') {
+                                callback(parsed);
+                                return;
+                            }
+                        }
+                    } catch (e) {}
                     callback(null);
                 });
             }

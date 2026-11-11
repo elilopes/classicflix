@@ -4,7 +4,7 @@ import { Movie, UserMovieInteraction } from '../types';
 import { getSupabase, getCurrentUser as getSupabaseUser } from './bd';
 
 // Re-export auth functions
-export { signInUser, signUpUser, signOutUser, subscribeToAuthChanges, getCurrentUser, signInWithGoogle } from './bd';
+export { signInUser, signUpUser, signOutUser, subscribeToAuthChanges, getCurrentUser, signInWithGoogle, signInWithWikipedia } from './bd';
 
 // Helper to clean array input from Postgres
 const cleanArray = (val: any): string[] => {

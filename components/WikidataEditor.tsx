@@ -10,10 +10,14 @@ interface WikidataEditorProps {
   movie?: Movie;
   onSuccess?: (qid: string) => void;
   isUserLoggedIn: boolean;
+  currentUser?: any;
   onClose?: () => void;
+  onOpenWikipediaLogin?: () => void;
 }
 
-export const WikidataEditor: React.FC<WikidataEditorProps> = ({ movie, onSuccess, isUserLoggedIn, onClose }) => {
+export const WikidataEditor: React.FC<WikidataEditorProps> = ({ 
+  movie, onSuccess, isUserLoggedIn, currentUser, onClose, onOpenWikipediaLogin 
+}) => {
   const [label, setLabel] = useState('');
   const [titlePt, setTitlePt] = useState('');
   const [description, setDescription] = useState('');
@@ -35,12 +39,19 @@ export const WikidataEditor: React.FC<WikidataEditorProps> = ({ movie, onSuccess
   const [awards, setAwards] = useState('');
   const [rating, setRating] = useState('');
   
+  const [editMethod, setEditMethod] = useState<'bot' | 'oauth'>('bot');
   const [syncWithWikidata, setSyncWithWikidata] = useState(false);
   const [loadingCreate, setLoadingCreate] = useState(false);
   const [loadingUpdate, setLoadingUpdate] = useState(false);
   const [loadingLocal, setLoadingLocal] = useState(false);
   const [loadingSync, setLoadingSync] = useState(false);
   const [message, setMessage] = useState<{text: string, type: 'success' | 'error'} | null>(null);
+
+  useEffect(() => {
+    if (currentUser?.provider === 'wikipedia') {
+      setEditMethod('oauth');
+    }
+  }, [currentUser]);
 
   useEffect(() => {
     if (movie) {
@@ -111,12 +122,18 @@ export const WikidataEditor: React.FC<WikidataEditorProps> = ({ movie, onSuccess
     setMessage(null);
 
     try {
+      const wikiUsername = currentUser?.provider === 'wikipedia' 
+        ? currentUser.displayName 
+        : (currentUser?.displayName || currentUser?.email?.split('@')[0] || 'usuario');
+      const userToken = currentUser?.accessToken;
+
       const response = await fetch('/api/wikidata/create', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           label, description, language: 'pt',
-          director, year, originalLanguage, originalTitle, producers, country, cinematography, distribution
+          director, year, originalLanguage, originalTitle, producers, country, cinematography, distribution,
+          editMethod, wikiUsername, userToken
         })
       });
 
@@ -124,7 +141,10 @@ export const WikidataEditor: React.FC<WikidataEditorProps> = ({ movie, onSuccess
 
       if (!response.ok) throw new Error(data.error || 'Erro ao criar item');
 
-      setMessage({text: `Item criado com sucesso! QID: ${data.qid}`, type: 'success'});
+      setMessage({
+        text: `Item criado com sucesso no Wikidata (${editMethod === 'oauth' ? 'via OAuth Wikipedia' : 'via Bot ClassicFlix'})! QID: ${data.qid}`, 
+        type: 'success'
+      });
       if (onSuccess) onSuccess(data.qid);
     } catch (error: any) {
       setMessage({text: error.message, type: 'error'});
@@ -147,12 +167,18 @@ export const WikidataEditor: React.FC<WikidataEditorProps> = ({ movie, onSuccess
     setMessage(null);
 
     try {
+      const wikiUsername = currentUser?.provider === 'wikipedia' 
+        ? currentUser.displayName 
+        : (currentUser?.displayName || currentUser?.email?.split('@')[0] || 'usuario');
+      const userToken = currentUser?.accessToken;
+
       const response = await fetch('/api/wikidata/update', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           id: movie.wikidataId, label, description, language: 'pt',
-          director, year, originalLanguage, originalTitle, producers, country, cinematography, distribution
+          director, year, originalLanguage, originalTitle, producers, country, cinematography, distribution,
+          editMethod, wikiUsername, userToken
         })
       });
 
@@ -160,7 +186,10 @@ export const WikidataEditor: React.FC<WikidataEditorProps> = ({ movie, onSuccess
 
       if (!response.ok) throw new Error(data.error || 'Erro ao atualizar item');
 
-      setMessage({text: `Item atualizado com sucesso! QID: ${data.qid}`, type: 'success'});
+      setMessage({
+        text: `Item atualizado com sucesso no Wikidata (${editMethod === 'oauth' ? 'via OAuth Wikipedia' : 'via Bot ClassicFlix'})! QID: ${data.qid}`, 
+        type: 'success'
+      });
       if (onSuccess) onSuccess(data.qid);
     } catch (error: any) {
       setMessage({text: error.message, type: 'error'});
@@ -257,6 +286,71 @@ export const WikidataEditor: React.FC<WikidataEditorProps> = ({ movie, onSuccess
           </div>
         </div>
         
+        {/* Escolha do Método de Edição no Wikidata: Bot ClassicFlix ou OAuth Wikipedia */}
+        <div className="p-3 rounded-3 bg-black bg-opacity-50 border border-secondary mb-3">
+          <label className="text-white small fw-bold mb-2 d-flex align-items-center gap-2">
+            <span>Método de Assinatura no Wikidata:</span>
+          </label>
+          <div className="d-flex gap-4 flex-wrap">
+            <div className="form-check">
+              <input 
+                className="form-check-input" 
+                type="radio" 
+                name="editMethod" 
+                id="methodBot" 
+                value="bot"
+                checked={editMethod === 'bot'}
+                onChange={() => setEditMethod('bot')}
+              />
+              <label className="form-check-label text-white small" htmlFor="methodBot">
+                🤖 <strong>Bot ClassicFlix</strong> <span className="text-white-50">(Edição automatizada pelo sistema)</span>
+              </label>
+            </div>
+            <div className="form-check">
+              <input 
+                className="form-check-input" 
+                type="radio" 
+                name="editMethod" 
+                id="methodOauth" 
+                value="oauth"
+                checked={editMethod === 'oauth'}
+                onChange={() => setEditMethod('oauth')}
+              />
+              <label className="form-check-label text-white small" htmlFor="methodOauth">
+                🌐 <strong>OAuth Wikipedia</strong> <span className="text-white-50">(Assinado com conta Wikipedia)</span>
+              </label>
+            </div>
+          </div>
+
+          {editMethod === 'oauth' && (
+            <div className="mt-2 pt-2 border-top border-secondary border-opacity-25">
+              {currentUser?.provider === 'wikipedia' ? (
+                <div className="d-flex align-items-center gap-2 text-info small">
+                  <div className="bg-white rounded-circle p-1 d-flex align-items-center justify-content-center" style={{ width: 20, height: 20 }}>
+                    <img src="https://upload.wikimedia.org/wikipedia/commons/6/63/Wikipedia-logo-en-big.png" alt="Wiki" style={{ width: 14, height: 14 }} />
+                  </div>
+                  <span>Conectado como <strong>@{currentUser.displayName}</strong>. As edições serão atribuídas ao seu usuário na Wikimedia.</span>
+                </div>
+              ) : (
+                <div className="d-flex align-items-center justify-content-between flex-wrap gap-2">
+                  <span className="text-warning small">Você ainda não conectou sua conta Wikipedia.</span>
+                  {onOpenWikipediaLogin && (
+                    <button 
+                      type="button" 
+                      onClick={onOpenWikipediaLogin}
+                      className="btn btn-sm btn-outline-light d-flex align-items-center gap-1 py-1 px-2"
+                      style={{ fontSize: '0.75rem' }}
+                    >
+                      <img src="https://upload.wikimedia.org/wikipedia/commons/6/63/Wikipedia-logo-en-big.png" alt="Wiki" style={{ width: 14, height: 14 }} />
+                      Conectar com a Wikipedia
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
         <input 
           className="form-control bg-black text-white border-secondary mb-2"
           placeholder="Nome da Produção (Label / Título EN)"

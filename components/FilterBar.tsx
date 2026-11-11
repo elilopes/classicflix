@@ -4,7 +4,7 @@ import { motion } from 'motion/react';
 import { 
   Filter, Star, CalendarDays, Languages, Palette, Layers, 
   Clock4, MonitorPlay, Megaphone, Trophy, LayoutGrid, Type, TrendingUp, Image as ImageIcon, Play,
-  ChevronLeft, ChevronRight
+  ChevronLeft, ChevronRight, Orbit
 } from 'lucide-react';
 import { FilterState, AppLanguage } from '../types';
 import { 
@@ -23,6 +23,7 @@ interface FilterBarProps {
   languageCounts: Record<string, number>;
   genreCounts: Record<string, number>; 
   themeCounts: Record<string, number>; 
+  onOpenGalaxy?: () => void;
 }
 
 export const FilterBar: React.FC<FilterBarProps> = ({
@@ -36,7 +37,8 @@ export const FilterBar: React.FC<FilterBarProps> = ({
   setViewMode,
   languageCounts,
   genreCounts,
-  themeCounts
+  themeCounts,
+  onOpenGalaxy
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   
@@ -115,6 +117,29 @@ export const FilterBar: React.FC<FilterBarProps> = ({
         }}
       >
         
+        {/* NEW: Galáxia 3D de Diretores */}
+        {onOpenGalaxy && (
+          <motion.button 
+            variants={chipVariants}
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            className={`${filterItemClass} border-info text-info bg-dark`}
+            onClick={onOpenGalaxy}
+            title={t.galaxyOfDirectors || "Galáxia de Diretores"}
+            style={{ 
+              width: 'auto', 
+              minWidth: '135px', 
+              height: FILTER_HEIGHT, 
+              scrollSnapAlign: 'start', 
+              backgroundColor: 'rgba(0, 200, 255, 0.15)',
+              borderColor: '#0dcaf0'
+            }}
+          >
+            <Orbit size={16} className="text-info flex-shrink-0" />
+            <span className="small fw-bold text-nowrap text-info">🌌 Galáxia 3D</span>
+          </motion.button>
+        )}
+
         {/* NEW: Top 30 Most Watched */}
         <motion.div 
           variants={chipVariants} 

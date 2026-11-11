@@ -42,6 +42,8 @@ import { Gamepad2, HardDrive } from 'lucide-react';
 import { GoogleDriveModal } from './components/GoogleDriveModal';
 import { BestReviewsModal } from './components/BestReviewsModal';
 import { McpConnectedAppsModal } from './components/McpConnectedAppsModal';
+import { WikipediaAuthModal } from './components/WikipediaAuthModal';
+import { getWikipediaAuthUrl, saveWikipediaUser } from './services/wikipediaAuthService';
 
 const getCanonicalLanguage = (rawLang: string | undefined): string => {
     if (!rawLang || rawLang === 'null' || rawLang === 'undefined') return 'Unknown';
@@ -74,6 +76,8 @@ export default function App() {
   const [showDriveModal, setShowDriveModal] = useState(false);
   const [showBestReviewsModal, setShowBestReviewsModal] = useState(false);
   const [showMcpModal, setShowMcpModal] = useState(false);
+  const [showWikipediaModal, setShowWikipediaModal] = useState(false);
+  const [wikipediaAuthData, setWikipediaAuthData] = useState<any>(null);
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
   const [authUsername, setAuthUsername] = useState('');
   const [authPassword, setAuthPassword] = useState('');
@@ -145,6 +149,28 @@ export default function App() {
         if (currentUser) getUserInteractions().then(setInteractions);
         else setInteractions([]);
     });
+
+    const handleOAuthMessage = async (event: MessageEvent) => {
+      const origin = event.origin;
+      if (!origin.endsWith('.run.app') && !origin.includes('localhost') && origin !== window.location.origin) {
+        return;
+      }
+      if (event.data?.type === 'WIKIPEDIA_AUTH_SUCCESS') {
+        const wikiUser = event.data.user;
+        if (wikiUser) {
+          await saveWikipediaUser(wikiUser);
+          setUser(wikiUser);
+          setShowAuthModal(false);
+          setShowWikipediaModal(false);
+          refreshData();
+        }
+      } else if (event.data?.type === 'WIKIPEDIA_AUTH_ERROR') {
+        setAuthError(event.data.error || 'Erro na autenticação da Wikipedia');
+      }
+    };
+
+    window.addEventListener('message', handleOAuthMessage);
+    return () => window.removeEventListener('message', handleOAuthMessage);
   }, []);
 
   const mostPopularMovies = useMemo(() => {
@@ -306,6 +332,43 @@ export default function App() {
     }
   };
 
+  const handleWikipediaAuth = async () => {
+    setAuthLoading(true);
+    setAuthError('');
+    try {
+      const authData = await getWikipediaAuthUrl();
+      setWikipediaAuthData(authData);
+
+      if (authData.configured && authData.url) {
+        // Direct OAuth popup following SKILL.md
+        const width = 650;
+        const height = 750;
+        const left = window.screen.width / 2 - width / 2;
+        const top = window.screen.height / 2 - height / 2;
+        const popup = window.open(
+          authData.url,
+          'wikipedia_oauth_popup',
+          `width=${width},height=${height},left=${left},top=${top},scrollbars=yes`
+        );
+
+        if (!popup) {
+          alert(appLanguage === 'pt' 
+            ? 'Por favor, habilite popups no seu navegador para conectar com a Wikipedia.' 
+            : 'Please allow popups for this site to connect with Wikipedia.');
+        }
+      } else {
+        // Show configuration / instant verification modal
+        setShowAuthModal(false);
+        setShowWikipediaModal(true);
+      }
+    } catch (err: any) {
+      console.error("Wikipedia OAuth error:", err);
+      setAuthError(err.message || 'Falha ao iniciar autenticação com a Wikipedia');
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
   const handleExportPDF = () => {
       setIsExporting(true);
       try {
@@ -391,8 +454,8 @@ export default function App() {
             )}
           </div>
 
-          <div className="d-flex gap-2 align-items-center">
-            <div className="dropdown me-1">
+          <div className="d-flex gap-2 align-items-center overflow-x-auto text-nowrap flex-nowrap py-1 no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', maxWidth: '100%' }}>
+            <div className="dropdown me-1 flex-shrink-0">
               <button className="btn btn-dark btn-sm dropdown-toggle border-secondary d-flex align-items-center gap-2" data-bs-toggle="dropdown">
                 <Globe size={16} className="text-info" /> <span className="d-none d-sm-inline">{appLanguage.toUpperCase()}</span>
               </button>
@@ -405,14 +468,24 @@ export default function App() {
               </ul>
             </div>
 
-            <button className="btn btn-outline-success btn-sm d-flex align-items-center gap-1" onClick={() => setShowAddModal(true)}><Plus size={16} /><span className="d-none d-lg-inline">{t.addMovie}</span></button>
-            <button className="btn btn-outline-danger btn-sm d-flex align-items-center gap-1" onClick={() => setShowTimelineModal(true)}><History size={16} /><span className="d-none d-lg-inline">{t.timeline}</span></button>
-            <button className="btn btn-outline-warning btn-sm d-flex align-items-center gap-1" onClick={() => setShowConverterModal(true)}><RefreshCw size={16} /><span className="d-none d-lg-inline">{t.videoConverter}</span></button>
-            <button className="btn btn-outline-info btn-sm d-flex align-items-center gap-1" onClick={() => setShowDriveModal(true)}>
+            <button 
+              className="btn btn-outline-info btn-sm d-flex align-items-center gap-1 flex-shrink-0 border-info" 
+              onClick={() => setShowGalaxyView(true)}
+              title={t.galaxyOfDirectors || "Galáxia de Diretores"}
+              style={{ backgroundColor: 'rgba(0, 200, 255, 0.12)' }}
+            >
+              <Orbit size={16} className="text-info flex-shrink-0" />
+              <span className="fw-bold">{t.galaxyOfDirectors || "Galáxia 3D"}</span>
+            </button>
+
+            <button className="btn btn-outline-success btn-sm d-flex align-items-center gap-1 flex-shrink-0" onClick={() => setShowAddModal(true)}><Plus size={16} /><span className="d-none d-lg-inline">{t.addMovie}</span></button>
+            <button className="btn btn-outline-danger btn-sm d-flex align-items-center gap-1 flex-shrink-0" onClick={() => setShowTimelineModal(true)}><History size={16} /><span className="d-none d-lg-inline">{t.timeline}</span></button>
+            <button className="btn btn-outline-warning btn-sm d-flex align-items-center gap-1 flex-shrink-0" onClick={() => setShowConverterModal(true)}><RefreshCw size={16} /><span className="d-none d-lg-inline">{t.videoConverter}</span></button>
+            <button className="btn btn-outline-info btn-sm d-flex align-items-center gap-1 flex-shrink-0" onClick={() => setShowDriveModal(true)}>
               <HardDrive size={16} />
               <span className="d-none d-lg-inline">Google Drive</span>
             </button>
-            <button className="btn btn-outline-warning btn-sm d-flex align-items-center gap-1" onClick={() => setShowBestReviewsModal(true)}>
+            <button className="btn btn-outline-warning btn-sm d-flex align-items-center gap-1 flex-shrink-0" onClick={() => setShowBestReviewsModal(true)}>
               <Trophy size={16} />
               <span className="d-none d-lg-inline">{appLanguage === 'pt' ? 'Melhores Críticas' : 'Top Reviews'}</span>
             </button>
@@ -440,8 +513,30 @@ export default function App() {
             
             {user ? (
               <div className="dropdown">
-                <button className="btn btn-dark dropdown-toggle border-secondary" data-bs-toggle="dropdown"><User size={18} className="text-danger" /> {user.email.split('@')[0]}</button>
+                <button className="btn btn-dark dropdown-toggle border-secondary d-flex align-items-center gap-2" data-bs-toggle="dropdown">
+                  {user.provider === 'wikipedia' ? (
+                    <div className="bg-white rounded-circle p-1 d-flex align-items-center justify-content-center" style={{ width: '20px', height: '20px' }}>
+                      <img 
+                        src="https://upload.wikimedia.org/wikipedia/commons/6/63/Wikipedia-logo-en-big.png" 
+                        alt="Wikipedia" 
+                        style={{ width: '14px', height: '14px', objectFit: 'contain' }} 
+                      />
+                    </div>
+                  ) : (
+                    <User size={18} className="text-danger" />
+                  )}
+                  <span>{user.displayName || user.email?.split('@')[0]}</span>
+                </button>
                 <ul className="dropdown-menu dropdown-menu-dark dropdown-menu-end shadow border-secondary">
+                  {user.provider === 'wikipedia' && (
+                    <li className="px-3 py-2 border-bottom border-secondary small">
+                      <div className="text-white-50 xsmall text-uppercase">{appLanguage === 'pt' ? 'Conta Wikipedia' : 'Wikipedia Account'}</div>
+                      <div className="fw-bold text-info">@{user.displayName}</div>
+                      {user.user_metadata?.edit_count !== undefined && (
+                        <div className="text-white-50 xsmall">{user.user_metadata.edit_count} {appLanguage === 'pt' ? 'edições' : 'edits'}</div>
+                      )}
+                    </li>
+                  )}
                   <li><button className="dropdown-item py-2" onClick={() => signOutUser()}><LogOut size={16} className="me-2" /> {t.logout}</button></li>
                 </ul>
               </div>
@@ -451,7 +546,20 @@ export default function App() {
       </nav>
 
       <main className="flex-grow-1">
-        <FilterBar filters={filters} setFilters={setFilters} appLanguage={appLanguage} t={t} uniqueDirectors={uniqueDirectors} uniqueAwards={uniqueAwards} viewMode={viewMode} setViewMode={setViewMode} languageCounts={stats.lang} genreCounts={stats.gen} themeCounts={stats.th} />
+        <FilterBar 
+          filters={filters} 
+          setFilters={setFilters} 
+          appLanguage={appLanguage} 
+          t={t} 
+          uniqueDirectors={uniqueDirectors} 
+          uniqueAwards={uniqueAwards} 
+          viewMode={viewMode} 
+          setViewMode={setViewMode} 
+          languageCounts={stats.lang} 
+          genreCounts={stats.gen} 
+          themeCounts={stats.th} 
+          onOpenGalaxy={() => setShowGalaxyView(true)}
+        />
         
         <div className="container-fluid p-4">
           {isLoading ? (
@@ -637,12 +745,21 @@ export default function App() {
 
       {/* Floating button for Galaxy View */}
       <button
-        className="btn btn-dark position-fixed rounded-circle shadow-lg d-flex align-items-center justify-content-center p-3 border border-secondary"
-        style={{ left: '20px', bottom: '100px', zIndex: 1040, width: '60px', height: '60px' }}
+        className="btn btn-dark position-fixed rounded-pill shadow-lg d-flex align-items-center gap-2 border border-info hover-scale"
+        style={{ 
+          left: '16px', 
+          bottom: '85px', 
+          zIndex: 9998, 
+          padding: '8px 16px',
+          boxShadow: '0 4px 20px rgba(0, 200, 255, 0.45)',
+          background: 'rgba(10, 15, 30, 0.95)'
+        }}
         onClick={() => setShowGalaxyView(true)}
         title={t.galaxyOfDirectors || "Galáxia de Diretores"}
+        aria-label="Galáxia de Diretores"
       >
-        <Orbit size={28} className="text-info" />
+        <Orbit size={20} className="text-info flex-shrink-0" />
+        <span className="fw-bold text-white small text-nowrap">🌌 Galáxia 3D</span>
       </button>
 
       {showGalaxyView && (
@@ -679,6 +796,7 @@ export default function App() {
         setAuthPassword={setAuthPassword} 
         handleAuth={handleAuth} 
         handleGoogleAuth={handleGoogleAuth}
+        handleWikipediaAuth={handleWikipediaAuth}
         authLoading={authLoading} 
         authError={authError}
         setAuthError={setAuthError}
@@ -710,6 +828,7 @@ export default function App() {
         onOpenAdedonha={() => setShowAdedonhaGame(true)}
         onOpenRanking={() => setShowLeaderboardModal(true)}
         onOpenNosferatu={() => setShowNosferatuGame(true)}
+        onOpenGalaxy={() => setShowGalaxyView(true)}
       />
 
       <BestReviewsModal 
@@ -725,6 +844,17 @@ export default function App() {
         onClose={() => setShowMcpModal(false)} 
         appLanguage={appLanguage} 
         moviesList={databaseMovies} 
+      />
+
+      <WikipediaAuthModal 
+        isOpen={showWikipediaModal}
+        onClose={() => setShowWikipediaModal(false)}
+        onSuccess={(wikiUser) => {
+          setUser(wikiUser);
+          refreshData();
+        }}
+        appLanguage={appLanguage}
+        authUrlData={wikipediaAuthData}
       />
     </div>
   );

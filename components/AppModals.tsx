@@ -36,6 +36,7 @@ interface AppModalsProps {
   setAuthPassword: (val: string) => void;
   handleAuth: () => void;
   handleGoogleAuth?: () => void;
+  handleWikipediaAuth?: () => void;
   authLoading: boolean;
   authError?: string;
   setAuthError?: (val: string) => void;
@@ -54,7 +55,7 @@ export function AppModals({
   showLeaderboardModal, setShowLeaderboardModal,
   isUserLoggedIn, currentUser,
   authUsername, setAuthUsername, authPassword, setAuthPassword,
-  handleAuth, handleGoogleAuth, authLoading, authError, setAuthError,
+  handleAuth, handleGoogleAuth, handleWikipediaAuth, authLoading, authError, setAuthError,
   onRefresh, t, onFilterDirector
 }: AppModalsProps) {
   return (
@@ -114,6 +115,25 @@ export function AppModals({
                        <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.35 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
                      </svg>
                      <span>{authMode === 'login' ? (appLanguage === 'pt' ? 'Entrar com o Google' : 'Sign in with Google') : (appLanguage === 'pt' ? 'Cadastrar com o Google' : 'Sign up with Google')}</span>
+                   </button>
+                 </div>
+
+                 {/* Wikipedia OAuth 2 Login / Sign Up */}
+                 <div className="d-grid gap-2 mb-3">
+                   <button 
+                     type="button"
+                     className="btn btn-dark text-white fw-bold py-2 shadow-sm d-flex align-items-center justify-content-center gap-2 border border-secondary"
+                     onClick={handleWikipediaAuth}
+                     disabled={authLoading}
+                   >
+                     <div className="bg-white rounded-circle p-1 d-flex align-items-center justify-content-center" style={{ width: '22px', height: '22px' }}>
+                       <img 
+                         src="https://upload.wikimedia.org/wikipedia/commons/6/63/Wikipedia-logo-en-big.png" 
+                         alt="Wikipedia" 
+                         style={{ width: '16px', height: '16px', objectFit: 'contain' }} 
+                       />
+                     </div>
+                     <span>{authMode === 'login' ? (appLanguage === 'pt' ? 'Entrar com a Wikipedia' : 'Sign in with Wikipedia') : (appLanguage === 'pt' ? 'Cadastrar com a Wikipedia' : 'Sign up with Wikipedia')}</span>
                    </button>
                  </div>
 

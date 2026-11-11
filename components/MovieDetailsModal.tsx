@@ -323,13 +323,39 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
     
     setIsUpdatingWikidata(true);
     try {
-      await sendEditToBackend({
-        qid: movie.wikidataId,
-        description: formData.description,
-        language: 'pt'
-      }, formData.backendUrl || undefined);
+      const editMethod = currentUser?.provider === 'wikipedia' ? 'oauth' : 'bot';
+      const wikiUsername = currentUser?.provider === 'wikipedia' ? currentUser.displayName : (currentUser?.email?.split('@')[0] || 'usuario');
+      const userToken = currentUser?.accessToken;
+
+      const res = await fetch('/api/wikidata/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: movie.wikidataId,
+          label: formData.title,
+          description: formData.description,
+          language: 'pt',
+          director: formData.director,
+          year: formData.year,
+          originalLanguage: formData.language,
+          originalTitle: formData.originalTitle,
+          editMethod,
+          wikiUsername,
+          userToken
+        })
+      });
+
+      if (!res.ok) {
+        await sendEditToBackend({
+          qid: movie.wikidataId,
+          description: formData.description,
+          language: 'pt'
+        }, formData.backendUrl || undefined);
+      }
       
-      alert("Metadados sincronizados com o Wikidata com sucesso!");
+      alert(language === 'pt' 
+        ? `Metadados sincronizados no Wikidata (${editMethod === 'oauth' ? 'via OAuth Wikipedia' : 'via Bot ClassicFlix'})!` 
+        : `Metadata synchronized to Wikidata (${editMethod === 'oauth' ? 'via Wikipedia OAuth' : 'via ClassicFlix Bot'})!`);
     } catch (wikiErr: any) {
       console.error("Wikidata sync failed:", wikiErr);
       alert(`Falha na sincronização com Wikidata: ${wikiErr.message}`);
@@ -1176,16 +1202,29 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
               </div>
             </div>
           </div>
-          <div className="modal-footer border-secondary bg-black">
-            <button className="btn btn-outline-secondary px-4" onClick={() => setIsEditingTags(false)}>{t.cancel}</button>
-            <button className="btn btn-primary px-4" onClick={handleUpdateWikidata} disabled={isUpdatingWikidata || !movie.wikidataId}>
-              {isUpdatingWikidata ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />} 
-              {t.wikidataSync || 'Atualizar Wikidata'}
+          <div className="modal-footer border-secondary bg-black d-flex justify-content-between flex-wrap gap-2">
+            <button 
+              className="btn btn-outline-warning px-3 d-flex align-items-center gap-2" 
+              onClick={() => {
+                setIsEditingTags(false);
+                setShowWikidataEditor(true);
+              }}
+              title="Abrir editor completo com escolha de Bot ClassicFlix ou OAuth Wikipedia"
+            >
+              <ExternalLink size={16} /> 
+              <span>{language === 'pt' ? 'Editor Completo Wikidata (Bot / OAuth)' : 'Full Wikidata Editor (Bot / OAuth)'}</span>
             </button>
-            <button className="btn btn-success px-4" onClick={handleSaveTags} disabled={isSaving}>
-              {isSaving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} 
-              {t.save || 'Salvar no Supabase'}
-            </button>
+            <div className="d-flex gap-2">
+              <button className="btn btn-outline-secondary px-4" onClick={() => setIsEditingTags(false)}>{t.cancel}</button>
+              <button className="btn btn-primary px-4" onClick={handleUpdateWikidata} disabled={isUpdatingWikidata || !movie.wikidataId}>
+                {isUpdatingWikidata ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />} 
+                {t.wikidataSync || 'Atualizar Wikidata'}
+              </button>
+              <button className="btn btn-success px-4" onClick={handleSaveTags} disabled={isSaving}>
+                {isSaving ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} 
+                {t.save || 'Salvar no Supabase'}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -1724,6 +1763,20 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
               movie={movie} 
               onClose={() => setShowWikidataHelper(false)} 
           />
+      )}
+
+      {/* Full Wikidata Editor Modal */}
+      {showWikidataEditor && (
+        <WikidataEditor
+          movie={movie}
+          isUserLoggedIn={isUserLoggedIn}
+          currentUser={currentUser}
+          onClose={() => setShowWikidataEditor(false)}
+          onSuccess={() => {
+            setShowWikidataEditor(false);
+            onRefresh();
+          }}
+        />
       )}
     </>
   );
