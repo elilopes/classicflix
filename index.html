@@ -5,47 +5,27 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ClassicFlix</title>
+    <meta name="description" content="A premium catalog for public domain and copyright-free movies and series. Features AI-powered search, categorizations, and an integrated player." />
+    <meta property="og:title" content="ClassicFlix" />
+    <meta property="og:description" content="A premium catalog for public domain and copyright-free movies and series. Features AI-powered search, categorizations, and an integrated player." />
     <!-- Bootstrap 5 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
     <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
-    <!-- CRITICAL: Global Error Handler (Must be first script) -->
+    <!-- CRITICAL: Global Polyfill -->
     <script>
-      // 1. Polyfill process for libraries that expect it
+      // Polyfill process for libraries that expect it
       window.process = window.process || {};
       window.process.env = window.process.env || {};
       window.process.env.NODE_ENV = window.process.env.NODE_ENV || 'development';
 
-      // 2. Error Display Logic
-      function showCriticalError(title, detail) {
-        window.stop();
-        const errorHtml = `
-          <div style="position:fixed;top:0;left:0;width:100%;height:100%;background:#141414;color:white;z-index:99999;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:20px;font-family:sans-serif;">
-            <h1 style="color:#e50914;margin-bottom:20px;font-size:24px;">${title}</h1>
-            <p style="color:#ccc;margin-bottom:20px;max-width:500px;">The application failed to load critical resources.</p>
-            <div style="background:#000;padding:15px;text-align:left;border-radius:4px;max-width:80%;width:600px;overflow:auto;border:1px solid #333;margin-bottom:20px;font-family:monospace;font-size:12px;color:#ff6b6b;">
-              ${detail}
-            </div>
-            <button onclick="window.location.reload()" style="padding:12px 24px;background:#e50914;color:white;border:none;border-radius:4px;cursor:pointer;font-weight:bold;font-size:16px;">Reload Page</button>
-          </div>
-        `;
-        document.body ? (document.body.innerHTML = errorHtml) : (document.documentElement.innerHTML = '<body>' + errorHtml + '<script type="module" src="/index.tsx"><\/script><\/body>');
-      }
-
       window.onerror = function(message, source, lineno, colno, error) {
-        const detail = `Error: ${message}\nSource: ${source}:${lineno}`;
-        console.error("Critical Error:", error || message);
-        showCriticalError("Application Error", detail);
-        return true;
+        console.error("Application Error:", message, source, lineno, error);
       };
 
       window.onunhandledrejection = function(event) {
-        const detail = `Uncaught Promise: ${event.reason ? event.reason.toString() : 'Unknown Reason'}`;
-        console.error("Unhandled Rejection:", event.reason);
-        if (event.reason && (event.reason.toString().includes('Failed to fetch') || event.reason.toString().includes('Importing'))) {
-             showCriticalError("Loading Error", detail);
-        }
+        console.warn("Unhandled Promise Rejection:", event.reason);
       };
     </script>
 
@@ -161,23 +141,7 @@
         border-radius: 10px;
       }
     </style>
-    <script type="importmap">
-    {
-      "imports": {
-        "react": "https://esm.sh/react@^19.2.4",
-        "react-dom": "https://esm.sh/react-dom@^19.2.4",
-        "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
-        "react/": "https://esm.sh/react@^19.2.4/",
-        "@google/genai": "https://esm.sh/@google/genai@^1.38.0",
-        "lucide-react": "https://esm.sh/lucide-react@^0.563.0",
-        "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2.43.2",
-        "jspdf": "https://esm.sh/jspdf@2.5.1",
-        "jspdf-autotable": "https://esm.sh/jspdf-autotable@3.8.2",
-        "framer-motion": "https://esm.sh/framer-motion@11.0.8"
-      }
-    }
-    </script>
-  <link rel="stylesheet" href="/index.css">
+    <link rel="stylesheet" href="/index.css">
 </head>
   <body>
     <div id="root"></div>

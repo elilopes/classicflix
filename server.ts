@@ -222,10 +222,9 @@ async function startServer() {
     }
   });
 
-  // Headers for SharedArrayBuffer (required by ffmpeg.wasm)
+  // Allow cross-origin resources (posters, banners, video previews)
   app.use((req, res, next) => {
-    res.header("Cross-Origin-Embedder-Policy", "require-corp");
-    res.header("Cross-Origin-Opener-Policy", "same-origin");
+    res.header("Cross-Origin-Resource-Policy", "cross-origin");
     next();
   });
 
@@ -324,10 +323,12 @@ async function startServer() {
   // --- Wikipedia / Wikimedia OAuth 2.0 Integration ---
   const getAppBaseUrl = (req?: express.Request): string => {
     if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, "");
-    if (process.env.NODE_ENV === "production") {
-      return "https://ais-pre-rketbkfc2ioywj5ptq55cf-18401513977.us-west1.run.app";
+    if (req) {
+      const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
+      const host = (req.headers['x-forwarded-host'] as string) || req.get('host');
+      if (host) return `${proto}://${host}`;
     }
-    return "https://ais-dev-rketbkfc2ioywj5ptq55cf-18401513977.us-west1.run.app";
+    return "";
   };
 
   // Endpoint to get Wikipedia authorization URL
@@ -360,8 +361,8 @@ async function startServer() {
       message: "WIKIPEDIA_CLIENT_ID não configurado.",
       setupUrl: "https://meta.wikimedia.org/wiki/Special:OAuthConsumerRegistration/propose",
       redirectUri,
-      devCallbackUrl: "https://ais-dev-rketbkfc2ioywj5ptq55cf-18401513977.us-west1.run.app/auth/wikipedia/callback",
-      sharedCallbackUrl: "https://ais-pre-rketbkfc2ioywj5ptq55cf-18401513977.us-west1.run.app/auth/wikipedia/callback"
+      devCallbackUrl: `${appUrl}/auth/wikipedia/callback`,
+      sharedCallbackUrl: `${appUrl}/auth/wikipedia/callback`
     });
   });
 

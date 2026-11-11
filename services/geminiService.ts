@@ -30,7 +30,7 @@ export const extractMetadataFromUrl = async (url: string): Promise<Partial<Movie
     await ensureApiKey();
     const ai = getAIClient();
     const response = await ai.models.generateContent({
-      model: "gemini-3.1-pro-preview",
+      model: "gemini-2.5-pro",
       contents: `Extract movie or series metadata from this URL: ${url}. 
       If the URL is from Wikidata, IMDb, TMDb, or Archive.org, use your internal knowledge to provide complete details for that specific production.
       If you can identify the movie from the URL, provide its details even if they are not explicitly on the page.
@@ -80,7 +80,7 @@ export const searchCatalogWithAI = async (query: string, availableMovies: Movie[
     Return a short "reasoning" explaining why you picked these movies.`;
 
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-2.5-flash",
       contents: `Movie List:\n${movieContext}\n\nUser Query: "${query}"`,
       config: {
         systemInstruction: systemInstruction,
@@ -108,7 +108,7 @@ export const generateMovieTrivia = async (title: string, year: number): Promise<
         await ensureApiKey();
         const ai = getAIClient();
         const response = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
+            model: "gemini-2.5-flash",
             contents: `Give me 4 interesting, lesser-known trivia facts about the movie "${title}" from ${year}. Return ONLY a JSON array of strings.`,
             config: {
                 responseMimeType: "application/json",
@@ -124,7 +124,7 @@ export const generateCriticalAnalysis = async (title: string, year: number, lang
         await ensureApiKey();
         const ai = getAIClient();
         const response = await ai.models.generateContent({
-            model: "gemini-3.1-pro-preview", 
+            model: "gemini-2.5-pro", 
             contents: `Write a deep, engaging critical analysis of the classic movie "${title}" (${year}) in ${language === 'pt' ? 'Portuguese' : 'English'}. Include historical significance, visual style and cultural impact. Use Markdown.`,
         });
         return response.text || "Analysis unavailable.";
@@ -136,7 +136,7 @@ export const generateCriticsSummary = async (title: string, year: number, langua
         await ensureApiKey();
         const ai = getAIClient();
         const response = await ai.models.generateContent({
-            model: "gemini-3.1-pro-preview", 
+            model: "gemini-2.5-pro", 
             contents: `Analyze the critical reception of the movie "${title}" (${year}) in ${language === 'pt' ? 'Portuguese' : 'English'}. Mention consensus, praises and legacy. Use Markdown.`,
         });
         return response.text || "Critics summary unavailable.";
@@ -148,7 +148,7 @@ export const generateCinemaHistory = async (title: string, year: number, languag
         await ensureApiKey();
         const ai = getAIClient();
         const response = await ai.models.generateContent({
-            model: "gemini-3.1-pro-preview", 
+            model: "gemini-2.5-pro", 
             contents: `Provide historical context about cinema in ${year}, the year "${title}" was released. What were the major trends, technological advances, and concurrent classics? Answer in ${language === 'pt' ? 'Portuguese' : 'English'}. Use Markdown.`,
         });
         return response.text || "History context unavailable.";
@@ -159,7 +159,7 @@ export const generateMovieEmojis = async (title: string): Promise<string> => {
     try {
         const ai = getAIClient();
         const response = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
+            model: "gemini-2.5-flash",
             contents: `Represent the movie title "${title}" using exactly 3 to 6 emojis or symbols. Return ONLY the emojis, no text.`,
         });
         return response.text?.trim() || "🎬❓";
@@ -173,7 +173,7 @@ export const generateMovieHint = async (title: string, year: number): Promise<st
     try {
         const ai = getAIClient();
         const response = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
+            model: "gemini-2.5-flash",
             contents: `Give a very short, one-sentence hint for the movie "${title}" (${year}) without mentioning its title.`,
         });
         return response.text?.trim() || `Released in ${year}`;
@@ -187,7 +187,7 @@ export const validateAdedonhaAnswer = async (category: string, letter: string, a
     await ensureApiKey();
     const ai = getAIClient();
     const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
+      model: "gemini-2.5-flash",
       contents: `Você é um juiz do jogo Adedonha (Stop). 
     A categoria é: ${category} (Títulos de filmes, Diretores, Desenhos Animados ou Temas de filmes).
     A letra obrigatória é: ${letter}.
@@ -212,7 +212,7 @@ export const createChatSession = (catalog: Movie[], language: string) => {
     const catalogSummary = catalog.map(m => `- ${m.title} (${m.year})`).join('\n');
     const systemInstruction = `You are "Cine-Sage", an expert on classic cinema. Answer in ${language === 'pt' ? 'Portuguese' : 'English'}. Catalog: ${catalogSummary}`;
     return ai.chats.create({
-        model: "gemini-3-flash-preview",
+        model: "gemini-2.5-flash",
         config: { systemInstruction }
     });
 };
