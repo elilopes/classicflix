@@ -236,7 +236,8 @@ export const searchImdbPoster = async (options: {
  */
 export const saveBannerToFolder = async (imageUrl: string, filename: string): Promise<string> => {
     try {
-        const response = await fetch('/api/banner/save', {
+        const url = typeof window !== 'undefined' ? '/api/banner/save' : 'http://127.0.0.1:3000/api/banner/save';
+        const response = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ imageUrl, filename })

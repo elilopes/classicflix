@@ -17,7 +17,8 @@ export const EditMetadataService = {
 
     // 2. Atualização no Banco de Dados MySQL (Local - Opcional)
     try {
-      const response = await fetch(`http://localhost:3001/api/movies/${id}`, {
+      const endpoint = typeof window !== 'undefined' ? `/api/movies/${id}` : `http://127.0.0.1:3000/api/movies/${id}`;
+      const response = await fetch(endpoint, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',

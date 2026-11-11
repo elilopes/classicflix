@@ -57,8 +57,8 @@ const MovieCard = ({ data, hoveredMovie, setHoveredMovie, onMovieClick }: any) =
         <boxGeometry args={[3, 4.5, 0.5]} />
         <meshBasicMaterial transparent opacity={0} />
       </mesh>
-      {isHovered && (
-        <Html distanceFactor={15} position={[0, 0, 0.1]} transform center>
+      {isHovered && data.movie && (
+        <Html distanceFactor={15} position={[0, 0, 0.1]} transform center zIndexRange={[100, 0]}>
           <div className="bg-dark text-white p-2 rounded shadow-lg border border-secondary" style={{ width: '150px', pointerEvents: 'none' }}>
             <img src={data.movie.posterUrl} alt={data.movie.title} className="w-100 rounded mb-2" style={{ height: '200px', objectFit: 'cover' }} />
             <div className="fw-bold text-truncate">{data.movie.title}</div>

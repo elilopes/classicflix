@@ -80,6 +80,7 @@ const getWikimediaThumbnail = (originalUrl: string, width: number = 300): string
     if (url.includes('/thumb/')) return url;
 
     try {
+        if (!url.startsWith('http://') && !url.startsWith('https://')) return url;
         const u = new URL(url);
         u.searchParams.set('width', width.toString());
         return u.toString();

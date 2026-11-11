@@ -38,8 +38,7 @@ import MosaicGame from './components/MosaicGame';
 import { AdedonhaGame } from './components/AdedonhaGame';
 import NosferatuGame from './components/NosferatuGame';
 import { MiniGamesModal } from './components/MiniGamesModal';
-import { Gamepad2, HardDrive } from 'lucide-react';
-import { GoogleDriveModal } from './components/GoogleDriveModal';
+import { Gamepad2 } from 'lucide-react';
 import { BestReviewsModal } from './components/BestReviewsModal';
 import { McpConnectedAppsModal } from './components/McpConnectedAppsModal';
 import { WikipediaAuthModal } from './components/WikipediaAuthModal';
@@ -73,7 +72,6 @@ export default function App() {
   const [showAdedonhaGame, setShowAdedonhaGame] = useState(false);
   const [showNosferatuGame, setShowNosferatuGame] = useState(false);
   const [showMiniGamesModal, setShowMiniGamesModal] = useState(false);
-  const [showDriveModal, setShowDriveModal] = useState(false);
   const [showBestReviewsModal, setShowBestReviewsModal] = useState(false);
   const [showMcpModal, setShowMcpModal] = useState(false);
   const [showWikipediaModal, setShowWikipediaModal] = useState(false);
@@ -481,10 +479,7 @@ export default function App() {
             <button className="btn btn-outline-success btn-sm d-flex align-items-center gap-1 flex-shrink-0" onClick={() => setShowAddModal(true)}><Plus size={16} /><span className="d-none d-lg-inline">{t.addMovie}</span></button>
             <button className="btn btn-outline-danger btn-sm d-flex align-items-center gap-1 flex-shrink-0" onClick={() => setShowTimelineModal(true)}><History size={16} /><span className="d-none d-lg-inline">{t.timeline}</span></button>
             <button className="btn btn-outline-warning btn-sm d-flex align-items-center gap-1 flex-shrink-0" onClick={() => setShowConverterModal(true)}><RefreshCw size={16} /><span className="d-none d-lg-inline">{t.videoConverter}</span></button>
-            <button className="btn btn-outline-info btn-sm d-flex align-items-center gap-1 flex-shrink-0" onClick={() => setShowDriveModal(true)}>
-              <HardDrive size={16} />
-              <span className="d-none d-lg-inline">Google Drive</span>
-            </button>
+
             <button className="btn btn-outline-warning btn-sm d-flex align-items-center gap-1 flex-shrink-0" onClick={() => setShowBestReviewsModal(true)}>
               <Trophy size={16} />
               <span className="d-none d-lg-inline">{appLanguage === 'pt' ? 'Melhores Críticas' : 'Top Reviews'}</span>
@@ -673,7 +668,9 @@ export default function App() {
       <footer className="bg-surface border-top border-secondary p-5 mt-5 text-center shadow">
         <h5 className="fw-bold mb-3 text-danger">LIBRARY CLASSICFLIX</h5>
         <p className="text-secondary small mb-2">{t.footerText}</p>
-        <p className="text-white-50 small m-0 fw-bold">{t.totalMovies}: {databaseMovies.length}</p>
+        <p className="text-white-50 small m-0 fw-bold">
+          {t.totalMovies}: {databaseMovies.length} | Poster's Movies: {databaseMovies.filter(m => m.posterUrl && !m.posterUrl.includes('placehold.co') && !m.posterUrl.includes('ui-avatars.com')).length}
+        </p>
       </footer>
       
       <AiConcierge catalog={databaseMovies} language={appLanguage} />
@@ -692,7 +689,6 @@ export default function App() {
 
       <TimelineModal isOpen={showTimelineModal} onClose={() => setShowTimelineModal(false)} movies={databaseMovies} language={appLanguage} />
       <VideoConverter isOpen={showConverterModal} onClose={() => setShowConverterModal(false)} language={appLanguage} />
-      <GoogleDriveModal isOpen={showDriveModal} onClose={() => setShowDriveModal(false)} appLanguage={appLanguage} />
       
       {showEmojiGame && (
         <EmojiGame 

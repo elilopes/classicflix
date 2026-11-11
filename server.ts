@@ -1,6 +1,14 @@
 
 import express from "express";
 import { createServer as createViteServer } from "vite";
+
+// Prevent server process termination on uncaught background errors
+process.on('uncaughtException', (err) => {
+  console.error('[Process Uncaught Exception]:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[Process Unhandled Rejection]:', reason);
+});
 import multer from "multer";
 import ffmpeg from "fluent-ffmpeg";
 import ffmpegPath from "@ffmpeg-installer/ffmpeg";
@@ -156,6 +164,103 @@ async function startServer() {
     } catch (error: any) {
       console.error("Google Drive API Error:", error);
       res.status(500).json({ error: error.message || "Failed to fetch Drive files" });
+    }
+  });
+
+  // API endpoint to synchronize posters from Google Drive to Supabase movies table
+  app.post("/api/drive/sync-posters", async (req, res) => {
+    const { 
+      accessToken, 
+      folderId = "1EplnNSliyeRLI0KcTYACJrvmIweqlxcX", 
+      fileMappings,
+      replaceExisting = true 
+    } = req.body;
+
+    try {
+      let mappings: Array<{ qid: string; posterUrl: string }> = [];
+
+      if (Array.isArray(fileMappings) && fileMappings.length > 0) {
+        mappings = fileMappings;
+      } else if (accessToken) {
+        // Fetch files directly from Google Drive API using user OAuth token
+        let pageToken: string | null = null;
+        const query = `'${folderId}' in parents and trashed = false`;
+
+        do {
+          const url = new URL("https://www.googleapis.com/drive/v3/files");
+          url.searchParams.set("q", query);
+          url.searchParams.set("pageSize", "1000");
+          url.searchParams.set("fields", "nextPageToken, files(id, name, mimeType)");
+          if (pageToken) url.searchParams.set("pageToken", pageToken);
+
+          const driveRes = await fetch(url.toString(), {
+            headers: { Authorization: `Bearer ${accessToken}` }
+          });
+
+          if (!driveRes.ok) {
+            const errJson = await driveRes.json().catch(() => ({}));
+            throw new Error(errJson.error?.message || `Google Drive API retornou status ${driveRes.status}`);
+          }
+
+          const driveData = await driveRes.json();
+          const pageFiles = driveData.files || [];
+
+          for (const f of pageFiles) {
+            if (f.name && f.name.toLowerCase().endsWith(".webp") && f.name.toUpperCase().startsWith("Q")) {
+              const qid = f.name.replace(/\.webp$/i, "").trim();
+              const posterUrl = `https://lh3.googleusercontent.com/d/${f.id}`;
+              mappings.push({ qid, posterUrl });
+            }
+          }
+
+          pageToken = driveData.nextPageToken || null;
+        } while (pageToken);
+      } else {
+        return res.status(400).json({ 
+          error: "Forneça 'accessToken' do Google Drive ou 'fileMappings' contendo qid e posterUrl" 
+        });
+      }
+
+      console.log(`[Drive Poster Sync] Iniciando atualização de ${mappings.length} posters no Supabase...`);
+
+      let updatedCount = 0;
+      let skippedCount = 0;
+      const errorsList: string[] = [];
+
+      // Update Supabase movies table for each mapping
+      for (const map of mappings) {
+        try {
+          const { data, error } = await supabase
+            .from("movies")
+            .update({ posterurl: map.posterUrl })
+            .eq("wikidataid", map.qid)
+            .select("id, wikidataid");
+
+          if (error) {
+            errorsList.push(`${map.qid}: ${error.message}`);
+          } else if (data && data.length > 0) {
+            updatedCount += data.length;
+          } else {
+            skippedCount++;
+          }
+        } catch (e: any) {
+          errorsList.push(`${map.qid}: ${e.message}`);
+        }
+      }
+
+      console.log(`[Drive Poster Sync] Concluído! Atualizados: ${updatedCount}, Não encontrados no banco: ${skippedCount}, Erros: ${errorsList.length}`);
+
+      res.json({
+        success: true,
+        totalDriveFiles: mappings.length,
+        updatedCount,
+        skippedCount,
+        errorCount: errorsList.length,
+        sampleUpdates: mappings.slice(0, 5)
+      });
+    } catch (err: any) {
+      console.error("[Drive Poster Sync Error]:", err);
+      res.status(500).json({ success: false, error: err.message || "Erro ao sincronizar posters do Drive" });
     }
   });
 

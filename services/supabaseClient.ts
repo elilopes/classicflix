@@ -1,10 +1,10 @@
 
-import { movies as localMovies } from '../movies';
-import { Movie, UserMovieInteraction } from '../types';
-import { getSupabase, getCurrentUser as getSupabaseUser } from './bd';
+import { movies as localMovies } from '../movies.ts';
+import { Movie, UserMovieInteraction } from '../types.ts';
+import { getSupabase, getCurrentUser as getSupabaseUser } from './bd.ts';
 
 // Re-export auth functions
-export { signInUser, signUpUser, signOutUser, subscribeToAuthChanges, getCurrentUser, signInWithGoogle, signInWithWikipedia } from './bd';
+export { signInUser, signUpUser, signOutUser, subscribeToAuthChanges, getCurrentUser, signInWithGoogle, signInWithWikipedia } from './bd.ts';
 
 // Helper to clean array input from Postgres
 const cleanArray = (val: any): string[] => {
@@ -303,6 +303,13 @@ export const updateMoviePoster = async (id: string, posterUrl: string) => {
     const supabase = await getSupabase();
     if (!supabase) return;
     await supabase.from('movies').update({ posterurl: posterUrl }).eq('id', id);
+};
+
+export const updateMoviePosterByWikidataId = async (wikidataId: string, posterUrl: string): Promise<boolean> => {
+    const supabase = await getSupabase();
+    if (!supabase) return false;
+    const { error } = await supabase.from('movies').update({ posterurl: posterUrl }).eq('wikidataid', wikidataId);
+    return !error;
 };
 
 /**
