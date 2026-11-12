@@ -2,6 +2,7 @@
 import { movies as localMovies } from '../movies.ts';
 import { Movie, UserMovieInteraction } from '../types.ts';
 import { getSupabase, getCurrentUser as getSupabaseUser } from './bd.ts';
+import { getGoogleDrivePosterUrl } from './drivePosterMap.ts';
 
 // Re-export auth functions
 export { signInUser, signUpUser, signOutUser, subscribeToAuthChanges, getCurrentUser, signInWithGoogle, signInWithWikipedia } from './bd.ts';
@@ -85,9 +86,29 @@ export const fetchSupabaseMovies = async (): Promise<Movie[]> => {
             const rawDesc = typeof item.description === 'string' ? item.description : item.descriptionen;
             const rawDescPt = typeof item.descriptionPt === 'string' ? item.descriptionPt : item.descriptionpt;
 
+            const qid = item.wikidataid || item.wikidataId;
+            const drivePoster = getGoogleDrivePosterUrl(qid);
+            const rawPoster = item.posterurl || item.posterUrl || "";
+            const isRawPosterDrive = rawPoster.includes('lh3.googleusercontent.com') || rawPoster.includes('drive.google.com');
+
+            let finalPoster = rawPoster;
+            let backupPoster: string | undefined = undefined;
+
+            if (isRawPosterDrive) {
+                finalPoster = rawPoster;
+                if (drivePoster && drivePoster !== rawPoster) {
+                    backupPoster = drivePoster;
+                }
+            } else if (drivePoster) {
+                finalPoster = drivePoster;
+                backupPoster = rawPoster || undefined;
+            } else {
+                finalPoster = rawPoster;
+            }
+
             return {
                 id: item.id,
-                wikidataId: item.wikidataid || item.wikidataId,
+                wikidataId: qid,
                 title: item.title,
                 titlePt: item.titlept || item.titlePt,
                 originalTitle: item.originaltitle || item.originalTitle,
@@ -95,7 +116,8 @@ export const fetchSupabaseMovies = async (): Promise<Movie[]> => {
                 language: item.language || "Unknown",
                 hasSubtitles: item.hassubtitles || item.hasSubtitles,
                 subtitleUrl: item.subtitleurl || item.subtitleUrl,
-                posterUrl: item.posterurl || item.posterUrl,
+                posterUrl: finalPoster,
+                backupPosterUrl: backupPoster,
                 videoUrl: item.videourl || item.videoUrl,
                 trailerUrl: item.trailerurl || item.trailerUrl,
                 description: rawDesc || descObj.descriptionen || "",

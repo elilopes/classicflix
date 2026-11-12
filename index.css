@@ -173,3 +173,28 @@
 .text-primary-custom {
   color: #e50914 !important;
 }
+
+/* Collapsible side action buttons */
+.side-collapsible-btn {
+  max-width: 48px;
+  overflow: hidden;
+  transition: max-width 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding 0.3s ease;
+  white-space: nowrap;
+}
+.side-collapsible-btn .label-text {
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+.side-collapsible-btn:hover,
+.side-collapsible-btn:active,
+.side-collapsible-btn:focus,
+.side-collapsible-btn.expanded {
+  max-width: 220px;
+}
+.side-collapsible-btn:hover .label-text,
+.side-collapsible-btn:active .label-text,
+.side-collapsible-btn:focus .label-text,
+.side-collapsible-btn.expanded .label-text {
+  opacity: 1;
+}
+

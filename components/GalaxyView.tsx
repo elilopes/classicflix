@@ -36,8 +36,8 @@ const MovieCard = ({ data, hoveredMovie, setHoveredMovie, onMovieClick }: any) =
   return (
     <group ref={ref} position={data.worldPos}>
       <Instance 
-        color={isHovered ? "white" : "#aaaaaa"} 
-        scale={isHovered ? 1.5 : 1}
+        color={isHovered ? "white" : "#00ccff"} 
+        scale={isHovered ? 1.8 : 1}
       />
       {/* Hitbox for interaction - use onClick rather than onPointerDown so touch dragging does not trigger movie click */}
       <mesh 
@@ -54,15 +54,23 @@ const MovieCard = ({ data, hoveredMovie, setHoveredMovie, onMovieClick }: any) =
           setHoveredMovie(null);
         }}
       >
-        <boxGeometry args={[3, 4.5, 0.5]} />
+        <boxGeometry args={[3.5, 5, 0.6]} />
         <meshBasicMaterial transparent opacity={0} />
       </mesh>
       {isHovered && data.movie && (
         <Html distanceFactor={15} position={[0, 0, 0.1]} transform center zIndexRange={[100, 0]}>
-          <div className="bg-dark text-white p-2 rounded shadow-lg border border-secondary" style={{ width: '150px', pointerEvents: 'none' }}>
+          <div 
+            className="bg-dark text-white p-2 rounded shadow-lg border border-info cursor-pointer hover-scale" 
+            style={{ width: '160px', pointerEvents: 'auto' }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onMovieClick(data.movie);
+            }}
+            title="Clique para ver detalhes do filme"
+          >
             <img src={data.movie.posterUrl} alt={data.movie.title} className="w-100 rounded mb-2" style={{ height: '200px', objectFit: 'cover' }} />
-            <div className="fw-bold text-truncate">{data.movie.title}</div>
-            <div className="small text-secondary">{data.movie.year}</div>
+            <div className="fw-bold text-truncate">{data.movie.titlePt || data.movie.title}</div>
+            <div className="small text-secondary">{data.movie.year} • ⭐ {data.movie.awards?.length || 0} prêmios</div>
           </div>
         </Html>
       )}
@@ -163,6 +171,9 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
     const map = new Map<string, Movie[]>();
     movies.forEach(m => {
       if (!m.director || m.director === 'Unknown') return;
+      // Requirement: Exiba apenas filmes premiados ao redor do diretor
+      if (!m.awards || m.awards.length === 0) return;
+
       const dirNames = m.director.split(',').map(d => d.trim()).filter(Boolean);
       dirNames.forEach(dir => {
         if (!map.has(dir)) map.set(dir, []);
@@ -170,26 +181,42 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
       });
     });
     
-    // Sort directors by awards first, then movie count
-    const sorted = Array.from(map.entries())
+    // Requirement: Exiba apenas os diretores que possuem acima de dois filmes premiados (> 2)
+    const filteredDirectors = Array.from(map.entries())
       .map(([name, dirMovies]) => {
-        const awardsCount = dirMovies.reduce((acc, m) => acc + (m.awards ? m.awards.length : 0), 0);
-        return { name, movies: dirMovies, awardsCount };
+        const awardedMoviesCount = dirMovies.length;
+        const totalAwards = dirMovies.reduce((acc, m) => acc + (m.awards ? m.awards.length : 0), 0);
+        return { name, movies: dirMovies, awardedMoviesCount, totalAwards };
       })
-      .sort((a, b) => {
-        if (b.awardsCount !== a.awardsCount) return b.awardsCount - a.awardsCount;
-        return b.movies.length - a.movies.length;
-      });
+      .filter(d => d.awardedMoviesCount > 2);
 
-    // Ensure at least 40 top directors are represented
+    // Sort directors by awarded movies count descending
+    const sorted = filteredDirectors.sort((a, b) => b.awardedMoviesCount - a.awardedMoviesCount);
+
+    // Top 40 qualified directors
     const dirs = sorted.slice(0, 40);
+    const maxAwarded = dirs.length > 0 ? Math.max(...dirs.map(d => d.awardedMoviesCount)) : 1;
     
     const dirPositions = dirs.map((d, i) => {
       const angle = i * 0.8;
       const radius = 100 + (angle * 35) + Math.random() * 40;
       const y = (Math.random() - 0.5) * 100;
+      
+      // Highlight directors with more awarded movies in distinct glowing colors
+      let color = "#ffaa00"; // default orange
+      let emissive = "#ffaa00";
+      if (d.awardedMoviesCount >= Math.max(5, maxAwarded * 0.75)) {
+        color = "#ffd700"; // Gold for elite tier
+        emissive = "#ffb700";
+      } else if (d.awardedMoviesCount >= Math.max(4, maxAwarded * 0.45)) {
+        color = "#00ffff"; // Cyan for high tier
+        emissive = "#0088ff";
+      }
+
       return {
         ...d,
+        color,
+        emissive,
         position: new THREE.Vector3(Math.cos(angle) * radius, y, Math.sin(angle) * radius)
       };
     });
@@ -273,16 +300,18 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
         <h3 className="fw-bold text-info fs-5 fs-md-3 mb-1 d-flex align-items-center gap-2">
           <span>🌌</span> {t.galaxyOfDirectors || "Galáxia de Diretores"}
         </h3>
-        <p className="text-secondary small mb-2 d-none d-md-block">{t.galaxySubtitle || "Explore filmes orbitando seus diretores. O ano define a distância da órbita."}</p>
+        <p className="text-secondary small mb-2 d-none d-md-block">
+          Exibindo diretores com mais de 2 filmes premiados e apenas suas obras premiadas.
+        </p>
         
         <div className="d-flex align-items-center gap-2 mt-1 mt-md-2 flex-wrap">
             <div className="d-flex align-items-center gap-1 small bg-black bg-opacity-70 px-2 py-1 rounded border border-secondary border-opacity-50">
-                <div className="rounded-circle" style={{ width: 10, height: 10, background: '#ffaa00' }}></div>
+                <div className="rounded-circle" style={{ width: 10, height: 10, background: '#ffd700' }}></div>
                 <span style={{ fontSize: '0.75rem' }}>{t.directorLabel || "Diretor"} ({directorPositions.length})</span>
             </div>
             <div className="d-flex align-items-center gap-1 small bg-black bg-opacity-70 px-2 py-1 rounded border border-secondary border-opacity-50">
                 <div className="rounded-circle" style={{ width: 10, height: 10, background: '#00ccff' }}></div>
-                <span style={{ fontSize: '0.75rem' }}>{t.movieLabel || "Filme"} ({movieInstances.length})</span>
+                <span style={{ fontSize: '0.75rem' }}>{t.movieLabel || "Filme Premiado"} ({movieInstances.length})</span>
             </div>
             
             {/* View Mode Toggle: 3D vs 2D */}
@@ -353,7 +382,7 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
             style={{ fontSize: '0.75rem' }}
             onClick={() => handleSelectDirector(dir)}
           >
-            ⭐ {dir.name} ({dir.movies.length})
+            ⭐ {dir.name} ({dir.awardedMoviesCount} filmes)
           </button>
         ))}
       </div>
@@ -391,10 +420,10 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
                   <div className="card bg-dark bg-opacity-75 border-secondary rounded-4 p-3 h-100 shadow">
                     <div className="d-flex align-items-center justify-content-between mb-3 border-bottom border-secondary pb-2">
                       <div className="d-flex align-items-center gap-2">
-                        <div className="rounded-circle" style={{ width: 14, height: 14, background: '#ffaa00' }}></div>
+                        <div className="rounded-circle" style={{ width: 14, height: 14, background: dir.color }}></div>
                         <h5 className="m-0 text-info fw-bold">{dir.name}</h5>
                       </div>
-                      <span className="badge bg-secondary">{dir.movies.length} {t.movieLabel || 'filmes'}</span>
+                      <span className="badge bg-warning text-dark">⭐ {dir.awardedMoviesCount} filmes premiados</span>
                     </div>
 
                     <div className="d-flex flex-column gap-2">
@@ -402,7 +431,9 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
                         <div 
                           key={movie.id}
                           className="d-flex align-items-center justify-content-between p-2 rounded bg-black bg-opacity-40 border border-secondary border-opacity-25 hover-scale cursor-pointer"
-                          onClick={() => onMovieClick(movie)}
+                          onClick={() => {
+                            if (onMovieClick) onMovieClick(movie);
+                          }}
                         >
                           <div className="d-flex align-items-center gap-2 overflow-hidden">
                             {movie.posterUrl ? (
@@ -412,7 +443,7 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
                             )}
                             <div className="text-truncate">
                               <div className="fw-bold small text-white text-truncate">{movie.titlePt || movie.title}</div>
-                              <div className="text-white-50 xsmall">{movie.year}</div>
+                              <div className="text-white-50 xsmall">{movie.year} • {movie.awards?.[0] || 'Prêmio'}</div>
                             </div>
                           </div>
                           <button className="btn btn-sm btn-outline-info rounded-circle p-1 flex-shrink-0" title="Ver Detalhes">
@@ -476,17 +507,17 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
                   onPointerOver={() => { document.body.style.cursor = 'pointer'; }}
                   onPointerOut={() => { document.body.style.cursor = 'auto'; }}
                 >
-                  <sphereGeometry args={[5, 20, 20]} />
+                  <sphereGeometry args={[6, 20, 20]} />
                   <meshStandardMaterial 
-                    color="#ffaa00" 
-                    emissive="#ffaa00" 
-                    emissiveIntensity={2.5} 
+                    color={dir.color} 
+                    emissive={dir.emissive} 
+                    emissiveIntensity={3} 
                     metalness={0.8}
                     roughness={0.2}
                   />
                 </mesh>
                 <Text 
-                  position={[0, 9, 0]} 
+                  position={[0, 10, 0]} 
                   fontSize={4.5} 
                   color="white" 
                   anchorX="center" 
@@ -494,7 +525,7 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
                   outlineWidth={0.4}
                   outlineColor="#000000"
                 >
-                  {dir.name}
+                  {dir.name} ({dir.awardedMoviesCount})
                 </Text>
               </group>
             ))}
@@ -558,12 +589,12 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
             maxWidth: '300px'
           }}
         >
-          <div className="fw-bold text-info h5">{hoveredMovie.title}</div>
-          <div className="small opacity-75">{hoveredMovie.year}</div>
-          {hoveredMovie.awards && hoveredMovie.awards.length > 0 && (
+          <div className="fw-bold text-info h5">{hoveredMovie.movie.title}</div>
+          <div className="small opacity-75">{hoveredMovie.movie.year}</div>
+          {hoveredMovie.movie.awards && hoveredMovie.movie.awards.length > 0 && (
               <div className="mt-2 xsmall text-warning d-flex align-items-start gap-2">
                   <Award size={14} className="mt-1 flex-shrink-0" />
-                  <span>{hoveredMovie.awards[0]}</span>
+                  <span>{hoveredMovie.movie.awards[0]}</span>
               </div>
           )}
         </div>

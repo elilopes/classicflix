@@ -4,7 +4,7 @@ import { motion } from 'motion/react';
 import { 
   Filter, Star, CalendarDays, Languages, Palette, Layers, 
   Clock4, MonitorPlay, Megaphone, Trophy, LayoutGrid, Type, TrendingUp, Image as ImageIcon, Play,
-  ChevronLeft, ChevronRight, Orbit
+  ChevronLeft, ChevronRight, Orbit, Film
 } from 'lucide-react';
 import { FilterState, AppLanguage } from '../types';
 import { 
@@ -23,7 +23,6 @@ interface FilterBarProps {
   languageCounts: Record<string, number>;
   genreCounts: Record<string, number>; 
   themeCounts: Record<string, number>; 
-  onOpenGalaxy?: () => void;
 }
 
 export const FilterBar: React.FC<FilterBarProps> = ({
@@ -37,8 +36,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
   setViewMode,
   languageCounts,
   genreCounts,
-  themeCounts,
-  onOpenGalaxy
+  themeCounts
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   
@@ -117,28 +115,31 @@ export const FilterBar: React.FC<FilterBarProps> = ({
         }}
       >
         
-        {/* NEW: Galáxia 3D de Diretores */}
-        {onOpenGalaxy && (
-          <motion.button 
-            variants={chipVariants}
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.95 }}
-            className={`${filterItemClass} border-info text-info bg-dark`}
-            onClick={onOpenGalaxy}
-            title={t.galaxyOfDirectors || "Galáxia de Diretores"}
-            style={{ 
-              width: 'auto', 
-              minWidth: '135px', 
-              height: FILTER_HEIGHT, 
-              scrollSnapAlign: 'start', 
-              backgroundColor: 'rgba(0, 200, 255, 0.15)',
-              borderColor: '#0dcaf0'
-            }}
-          >
-            <Orbit size={16} className="text-info flex-shrink-0" />
-            <span className="small fw-bold text-nowrap text-info">🌌 Galáxia 3D</span>
-          </motion.button>
-        )}
+        {/* Type Filter */}
+        <motion.div 
+          variants={chipVariants} 
+          whileHover="hover" 
+          className={`${filterItemClass} border-secondary`}
+          style={{ width: FILTER_WIDTH, height: FILTER_HEIGHT, scrollSnapAlign: 'start' }}
+        >
+            <Film size={14} className="text-secondary flex-shrink-0" />
+            <select className="form-select bg-transparent border-0 text-white shadow-none py-0 small flex-grow-1 text-truncate" style={{ width: '0', minWidth: '0' }} value={filters.selectedType || ""} onChange={e => setFilters({...filters, selectedType: e.target.value || null})}>
+                <option className="bg-dark text-white" value="">{appLanguage === 'pt' ? 'Tipo (Todos)' : 'Type (All)'}</option>
+                <option className="bg-dark text-white" value="film">Film</option>
+                <option className="bg-dark text-white" value="short film">Short Film</option>
+                <option className="bg-dark text-white" value="television film">Television Film</option>
+                <option className="bg-dark text-white" value="television program">Television Program</option>
+                <option className="bg-dark text-white" value="television series episode">Television Series Episode</option>
+                <option className="bg-dark text-white" value="silent film">Silent Film</option>
+                <option className="bg-dark text-white" value="silent short film">Silent Short Film</option>
+                <option className="bg-dark text-white" value="animated short film">Animated Short Film</option>
+                <option className="bg-dark text-white" value="animated film">Animated Film</option>
+                <option className="bg-dark text-white" value="television series">Television Series</option>
+                <option className="bg-dark text-white" value="film series">Film Series</option>
+                <option className="bg-dark text-white" value="open-source film">Open-source Film</option>
+                <option className="bg-dark text-white" value="miniseries">Miniseries</option>
+            </select>
+        </motion.div>
 
         {/* NEW: Top 30 Most Watched */}
         <motion.div 

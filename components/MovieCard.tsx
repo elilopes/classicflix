@@ -84,29 +84,51 @@ export const SkeletonCard: React.FC = () => {
   );
 };
 
+import { resolveMoviePoster } from '../services/drivePosterMap';
+
 export const MovieCard: React.FC<MovieCardProps> = ({ movie, state, onOpen, viewMode, onPosterFound }) => {
-    const [imageSrc, setImageSrc] = useState<string>(movie.posterUrl);
+    const initialResolution = resolveMoviePoster(movie);
+    const [imageSrc, setImageSrc] = useState<string>(initialResolution.primaryUrl || movie.posterUrl);
+    const [triedFallback, setTriedFallback] = useState<boolean>(false);
     const [imageError, setImageError] = useState(false);
+
+    // Synchronize when movie props change
+    useEffect(() => {
+        const res = resolveMoviePoster(movie);
+        setImageSrc(res.primaryUrl || movie.posterUrl);
+        setTriedFallback(false);
+        setImageError(false);
+    }, [movie.id, movie.wikidataId, movie.posterUrl]);
+
+    const handleImageError = () => {
+        const fallback = movie.backupPosterUrl || initialResolution.fallbackUrl;
+        if (fallback && !triedFallback && fallback !== imageSrc) {
+            setTriedFallback(true);
+            setImageSrc(fallback);
+            setImageError(false);
+            return;
+        }
+
+        // Try external strategies if available
+        if (movie.identifiers?.archiveId && !imageSrc.includes('archive.org')) {
+            setImageSrc(`https://archive.org/services/img/${movie.identifiers.archiveId}`);
+            setImageError(false);
+            return;
+        }
+
+        setImageError(true);
+    };
 
     // Effect to try and resolve a better image if the current one is missing or a placeholder
     useEffect(() => {
         let isMounted = true;
 
         const resolveImage = async () => {
-            // Check if we need to resolve (missing URL or generic placeholder).
-            // We treat Wikimedia Special:FilePath as VALID now.
-            // We treat ui-avatars as a placeholder because we prefer a real movie poster if available.
-            const isPlaceholder = !movie.posterUrl || 
-                                  movie.posterUrl.includes('placehold.co') || 
-                                  movie.posterUrl.includes('ui-avatars.com');
+            const isPlaceholder = !imageSrc || 
+                                  imageSrc.includes('placehold.co') || 
+                                  imageSrc.includes('ui-avatars.com');
             
-            // If we already have a good image, just set it and return
-            if (!isPlaceholder) {
-                if (movie.posterUrl !== imageSrc && isMounted) {
-                    setImageSrc(movie.posterUrl);
-                }
-                return;
-            }
+            if (!isPlaceholder) return;
 
             // --- STRATEGIES TO FIND IMAGE ---
             let foundUrl = '';
@@ -114,9 +136,7 @@ export const MovieCard: React.FC<MovieCardProps> = ({ movie, state, onOpen, view
             if (movie.identifiers) {
                 // Strategy 1: Archive.org Thumbnail (Fastest, valid for public domain)
                 if (movie.identifiers.archiveId && !foundUrl) {
-                    const archiveThumb = `https://archive.org/services/img/${movie.identifiers.archiveId}`;
-                    // Simple check if it's a valid url format
-                    foundUrl = archiveThumb;
+                    foundUrl = `https://archive.org/services/img/${movie.identifiers.archiveId}`;
                 }
 
                 // Strategy 2: TMDb via IMDb ID (High Quality)
@@ -139,22 +159,12 @@ export const MovieCard: React.FC<MovieCardProps> = ({ movie, state, onOpen, view
                         }
                     } catch (e) { /* ignore */ }
                 }
-                
-                // Strategy 4: Open Library / Wikidata (Experimental/Generic)
-                // Note: Open Library covers usually rely on ISBN, but we map strictly as requested
-                if (movie.id && !foundUrl) {
-                    // Try to construct a likely URL, or use a generic service
-                    // Note: This is speculative as OpenLibrary is for books, but added per request
-                    // foundUrl = `https://covers.openlibrary.org/b/id/${movie.id}-L.jpg`; 
-                }
             }
 
             // --- APPLY & SAVE ---
-            
-            if (foundUrl) {
-                if (isMounted) setImageSrc(foundUrl);
-                // PERSISTENCE: Save this found URL back to Supabase so next time it loads instantly
-                // We fire and forget this promise to not block the UI
+            if (foundUrl && isMounted) {
+                setImageSrc(foundUrl);
+                setImageError(false);
                 updateMoviePoster(movie.id, foundUrl);
                 if (onPosterFound) {
                     onPosterFound(movie.id, foundUrl);
@@ -163,9 +173,7 @@ export const MovieCard: React.FC<MovieCardProps> = ({ movie, state, onOpen, view
             }
             
             // Strategy 5 (Fallback): UI Avatars Dynamic Image
-            // If all APIs failed, generate a nice typographic card
             if (isPlaceholder && isMounted) {
-                // Creates a dark card with red text (Netflix style palette)
                 const fallbackUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(movie.title)}&background=1f1f1f&color=e50914&size=512&bold=true&length=2&font-size=0.33&uppercase=true`;
                 setImageSrc(fallbackUrl);
             }
@@ -174,7 +182,7 @@ export const MovieCard: React.FC<MovieCardProps> = ({ movie, state, onOpen, view
         resolveImage();
 
         return () => { isMounted = false; };
-    }, [movie.id, movie.identifiers, movie.posterUrl, movie.title]);
+    }, [movie.id, movie.identifiers, movie.posterUrl, movie.title, imageSrc]);
 
     const itemVariants = {
         hidden: { opacity: 0, y: 20 },
@@ -229,7 +237,7 @@ export const MovieCard: React.FC<MovieCardProps> = ({ movie, state, onOpen, view
                     <img 
                         src={imageSrc} 
                         style={{ display: 'none' }} 
-                        onError={() => setImageError(true)} 
+                        onError={handleImageError} 
                         onLoad={() => setImageError(false)}
                         alt={movie.title}
                     />

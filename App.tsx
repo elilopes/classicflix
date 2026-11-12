@@ -103,7 +103,8 @@ export default function App() {
     selectedAward: null,
     hasPosterOnly: false,
     hasVideoOnly: false,
-    selectedTop30: null
+    selectedTop30: null,
+    selectedType: null
   });
 
   const t = APP_TRANSLATIONS[appLanguage] || APP_TRANSLATIONS['en'];
@@ -111,7 +112,7 @@ export default function App() {
   const [showGalaxyView, setShowGalaxyView] = useState(false);
 
   const isFiltering = useMemo(() => {
-    return !!(filters.searchQuery || filters.selectedGenre || filters.selectedLanguage || filters.selectedYear || filters.selectedDecade || filters.selectedRating || filters.selectedColor || filters.selectedTheme || filters.selectedDuration || filters.hasSubtitles !== null || filters.selectedDirector || filters.selectedAward || filters.hasPosterOnly || filters.hasVideoOnly || filters.selectedTop30);
+    return !!(filters.searchQuery || filters.selectedGenre || filters.selectedLanguage || filters.selectedYear || filters.selectedDecade || filters.selectedRating || filters.selectedColor || filters.selectedTheme || filters.selectedDuration || filters.hasSubtitles !== null || filters.selectedDirector || filters.selectedAward || filters.hasPosterOnly || filters.hasVideoOnly || filters.selectedTop30 || filters.selectedType);
   }, [filters]);
 
   useEffect(() => { setVisibleCount(48); }, [filters]);
@@ -228,6 +229,7 @@ export default function App() {
       const matchesTheme = !filters.selectedTheme || (movie.themes || []).includes(filters.selectedTheme);
       const matchesSubtitles = filters.hasSubtitles === null || movie.hasSubtitles === filters.hasSubtitles;
       const matchesAward = !filters.selectedAward || (movie.awards || []).includes(filters.selectedAward);
+      const matchesType = !filters.selectedType || movie.type === filters.selectedType;
       let matchesRating = true;
       if (filters.selectedRating) {
           const cat = RATING_CATEGORIES.find(c => c.id === filters.selectedRating);
@@ -254,7 +256,7 @@ export default function App() {
          else if (filters.selectedDuration === 'giant') matchesDuration = minutes > 120;
       }
       const matchesColor = !filters.selectedColor || movie.color === filters.selectedColor;
-      return matchesSearch && matchesGenre && matchesLang && matchesYear && matchesDecade && matchesDirector && matchesTheme && matchesSubtitles && matchesAward && matchesRating && matchesDuration && matchesColor;
+      return matchesSearch && matchesGenre && matchesLang && matchesYear && matchesDecade && matchesDirector && matchesTheme && matchesSubtitles && matchesAward && matchesRating && matchesDuration && matchesColor && matchesType;
     });
   }, [databaseMovies, filters, isFiltering]);
 
@@ -401,9 +403,9 @@ export default function App() {
 
   return (
     <div className="min-vh-100 bg-black text-white d-flex flex-column">
-      <nav className="navbar navbar-expand-lg navbar-dark bg-surface sticky-top border-bottom border-secondary px-3 shadow">
+      <nav className="navbar navbar-expand-lg navbar-dark bg-surface sticky-top border-bottom border-secondary px-3 shadow" style={{ zIndex: 1100 }}>
         <div className="container-fluid">
-          <a className="navbar-brand fw-bold text-danger d-flex align-items-center gap-2" href="#" onClick={() => setFilters({searchQuery: '', selectedGenre: null, selectedLanguage: null, selectedYear: null, selectedDecade: null, selectedRating: null, selectedColor: null, selectedTheme: null, selectedSource: null, selectedDuration: null, hasSubtitles: null, selectedDirector: null, selectedAward: null, hasPosterOnly: false, hasVideoOnly: false, selectedTop30: null})}>
+          <a className="navbar-brand fw-bold text-danger d-flex align-items-center gap-2" href="#" onClick={() => setFilters({searchQuery: '', selectedGenre: null, selectedLanguage: null, selectedYear: null, selectedDecade: null, selectedRating: null, selectedColor: null, selectedTheme: null, selectedSource: null, selectedDuration: null, hasSubtitles: null, selectedDirector: null, selectedAward: null, hasPosterOnly: false, hasVideoOnly: false, selectedTop30: null, selectedType: null})}>
             <Film size={26} /> <span>CLASSICFLIX</span>
           </a>
           
@@ -553,7 +555,6 @@ export default function App() {
           languageCounts={stats.lang} 
           genreCounts={stats.gen} 
           themeCounts={stats.th} 
-          onOpenGalaxy={() => setShowGalaxyView(true)}
         />
         
         <div className="container-fluid p-4">
@@ -630,7 +631,7 @@ export default function App() {
 
               {/* GRID ATUALIZADO: 5 (XS), 6 (SM), 8 (MD), 10 (LG), 12 (XL/XXL) */}
               <motion.div 
-                key={filters.searchQuery + filters.selectedGenre + filters.selectedLanguage + filters.selectedYear + filters.selectedDecade + filters.selectedRating + filters.selectedColor + filters.selectedTheme + filters.selectedDuration + filters.hasSubtitles + filters.selectedDirector + filters.selectedAward + filters.hasPosterOnly + filters.hasVideoOnly + filters.selectedTop30}
+                key={filters.searchQuery + filters.selectedGenre + filters.selectedLanguage + filters.selectedYear + filters.selectedDecade + filters.selectedRating + filters.selectedColor + filters.selectedTheme + filters.selectedDuration + filters.hasSubtitles + filters.selectedDirector + filters.selectedAward + filters.hasPosterOnly + filters.hasVideoOnly + filters.selectedTop30 + filters.selectedType}
                 initial="hidden"
                 animate="visible"
                 variants={{
@@ -679,11 +680,19 @@ export default function App() {
       {!showMiniGamesModal && (
         <button 
           onClick={() => setShowMiniGamesModal(true)}
-          className="position-fixed bg-transparent border-0 text-white hover-scale p-0 d-flex align-items-center justify-content-center"
-          style={{ bottom: '100px', right: '1.5rem', zIndex: 9998, filter: 'drop-shadow(0 4px 6px rgba(0,0,0,0.5))' }}
-          title="Mini Jogos"
+          className="btn btn-dark position-fixed rounded-pill shadow-lg d-flex align-items-center gap-2 border border-success hover-scale side-collapsible-btn"
+          style={{ 
+            right: '16px', 
+            bottom: '90px', 
+            zIndex: 9998, 
+            padding: '8px 16px',
+            boxShadow: '0 4px 20px rgba(40, 167, 69, 0.45)',
+            background: 'rgba(10, 30, 20, 0.95)'
+          }}
+          title={appLanguage === 'pt' ? 'Mini Jogos' : 'Mini Games'}
         >
-          <Gamepad2 size={42} />
+          <Gamepad2 size={20} className="text-success flex-shrink-0" />
+          <span className="fw-bold text-white small text-nowrap label-text">{appLanguage === 'pt' ? '🎮 Mini Jogos' : '🎮 Mini Games'}</span>
         </button>
       )}
 
@@ -741,10 +750,10 @@ export default function App() {
 
       {/* Floating button for Galaxy View */}
       <button
-        className="btn btn-dark position-fixed rounded-pill shadow-lg d-flex align-items-center gap-2 border border-info hover-scale"
+        className="btn btn-dark position-fixed rounded-pill shadow-lg d-flex align-items-center gap-2 border border-info hover-scale side-collapsible-btn"
         style={{ 
           left: '16px', 
-          bottom: '85px', 
+          bottom: '24px', 
           zIndex: 9998, 
           padding: '8px 16px',
           boxShadow: '0 4px 20px rgba(0, 200, 255, 0.45)',
@@ -755,7 +764,7 @@ export default function App() {
         aria-label="Galáxia de Diretores"
       >
         <Orbit size={20} className="text-info flex-shrink-0" />
-        <span className="fw-bold text-white small text-nowrap">🌌 Galáxia 3D</span>
+        <span className="fw-bold text-white small text-nowrap label-text">🌌 {t.galaxyOfDirectors || "Galáxia 3D"}</span>
       </button>
 
       {showGalaxyView && (

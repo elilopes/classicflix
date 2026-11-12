@@ -87,11 +87,19 @@ export const AiConcierge: React.FC<AiConciergeProps> = ({ catalog, language }) =
             {!isOpen && (
                 <button 
                     onClick={toggleOpen}
-                    className="position-fixed bg-transparent border-0 text-white hover-scale p-0 d-flex align-items-center justify-content-center"
-                    style={{ bottom: '2rem', right: '1.5rem', zIndex: 9999, filter: 'drop-shadow(0 4px 6px rgba(0,0,0,0.5))' }}
-                    title="Cine-Sage AI"
+                    className="btn btn-dark position-fixed rounded-pill shadow-lg d-flex align-items-center gap-2 border border-warning hover-scale side-collapsible-btn"
+                    style={{ 
+                        bottom: '24px', 
+                        right: '16px', 
+                        zIndex: 9999, 
+                        padding: '8px 16px',
+                        boxShadow: '0 4px 20px rgba(255, 193, 7, 0.45)',
+                        background: 'rgba(30, 25, 10, 0.95)'
+                    }}
+                    title={language === 'pt' ? 'Assistente IA' : 'Assistant AI'}
                 >
-                    <Bot size={42} />
+                    <Bot size={20} className="text-warning flex-shrink-0" />
+                    <span className="fw-bold text-white small text-nowrap label-text">{language === 'pt' ? 'Assistente IA' : 'Assistant AI'}</span>
                 </button>
             )}
 
@@ -101,7 +109,7 @@ export const AiConcierge: React.FC<AiConciergeProps> = ({ catalog, language }) =
                     <div className="card-header bg-gradient-to-r from-primary-custom to-black border-bottom border-secondary d-flex justify-content-between align-items-center py-3">
                         <div className="d-flex align-items-center gap-2">
                             <Bot size={18} className="text-warning" />
-                            <h6 className="m-0 fw-bold text-white">Cine-Sage AI</h6>
+                            <h6 className="m-0 fw-bold text-white">{language === 'pt' ? 'Assistente IA' : 'Assistant AI'}</h6>
                         </div>
                         <button onClick={toggleOpen} className="btn btn-sm btn-icon text-white-50 hover-text-white p-0">
                             <X size={20} />

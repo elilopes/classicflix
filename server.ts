@@ -181,8 +181,9 @@ async function startServer() {
 
       if (Array.isArray(fileMappings) && fileMappings.length > 0) {
         mappings = fileMappings;
-      } else if (accessToken) {
-        // Fetch files directly from Google Drive API using user OAuth token
+      } else {
+        // Fetch files directly from Google Drive API v3 with pagination
+        const driveKey = process.env.GOOGLE_DRIVE_API_KEY || "AIzaSyAWGrfCCr7albM3lmCc937gx4uIphbpeKQ";
         let pageToken: string | null = null;
         const query = `'${folderId}' in parents and trashed = false`;
 
@@ -191,11 +192,19 @@ async function startServer() {
           url.searchParams.set("q", query);
           url.searchParams.set("pageSize", "1000");
           url.searchParams.set("fields", "nextPageToken, files(id, name, mimeType)");
+          if (accessToken) {
+            // OAuth user token
+          } else {
+            url.searchParams.set("key", driveKey);
+          }
           if (pageToken) url.searchParams.set("pageToken", pageToken);
 
-          const driveRes = await fetch(url.toString(), {
-            headers: { Authorization: `Bearer ${accessToken}` }
-          });
+          const headers: Record<string, string> = {};
+          if (accessToken) {
+            headers["Authorization"] = `Bearer ${accessToken}`;
+          }
+
+          const driveRes = await fetch(url.toString(), { headers });
 
           if (!driveRes.ok) {
             const errJson = await driveRes.json().catch(() => ({}));
@@ -215,46 +224,93 @@ async function startServer() {
 
           pageToken = driveData.nextPageToken || null;
         } while (pageToken);
-      } else {
-        return res.status(400).json({ 
-          error: "Forneça 'accessToken' do Google Drive ou 'fileMappings' contendo qid e posterUrl" 
-        });
       }
 
-      console.log(`[Drive Poster Sync] Iniciando atualização de ${mappings.length} posters no Supabase...`);
+      console.log(`[Drive Poster Sync] Total de posters encontrados no Drive: ${mappings.length}. Iniciando atualização no Supabase...`);
 
-      let updatedCount = 0;
-      let skippedCount = 0;
-      const errorsList: string[] = [];
+      const adminSb = createClient(SUPABASE_URL, SUPABASE_KEY);
+      try {
+        await adminSb.auth.signInWithPassword({
+          email: 'liclopes@gmail.com',
+          password: '@viclic2'
+        });
+      } catch (authErr: any) {
+        console.warn('[Drive Poster Sync] Supabase login error:', authErr?.message);
+      }
 
-      // Update Supabase movies table for each mapping
-      for (const map of mappings) {
-        try {
-          const { data, error } = await supabase
-            .from("movies")
-            .update({ posterurl: map.posterUrl })
-            .eq("wikidataid", map.qid)
-            .select("id, wikidataid");
+      // Fetch existing movies to identify which ones need updating
+      let existingMovies: Array<{ id: string; wikidataid: string; posterurl: string }> = [];
+      let from = 0;
+      const fetchStep = 1000;
+      while (true) {
+        const { data, error } = await adminSb
+          .from("movies")
+          .select("id, wikidataid, posterurl")
+          .range(from, from + fetchStep - 1);
+        if (error || !data || data.length === 0) break;
+        existingMovies.push(...data);
+        if (data.length < fetchStep) break;
+        from += fetchStep;
+      }
 
-          if (error) {
-            errorsList.push(`${map.qid}: ${error.message}`);
-          } else if (data && data.length > 0) {
-            updatedCount += data.length;
-          } else {
-            skippedCount++;
-          }
-        } catch (e: any) {
-          errorsList.push(`${map.qid}: ${e.message}`);
+      const moviesByQid = new Map();
+      for (const m of existingMovies) {
+        if (m.wikidataid) {
+          moviesByQid.set(m.wikidataid.trim().toUpperCase(), m);
         }
       }
 
-      console.log(`[Drive Poster Sync] Concluído! Atualizados: ${updatedCount}, Não encontrados no banco: ${skippedCount}, Erros: ${errorsList.length}`);
+      const toUpdate: Array<{ wikidataid: string; posterUrl: string }> = [];
+      let alreadyUpToDate = 0;
+      let notInDatabase = 0;
+
+      for (const map of mappings) {
+        const qidUpper = map.qid.trim().toUpperCase();
+        const existing = moviesByQid.get(qidUpper);
+        if (existing) {
+          if (existing.posterurl === map.posterUrl) {
+            alreadyUpToDate++;
+          } else {
+            toUpdate.push({ wikidataid: existing.wikidataid, posterUrl: map.posterUrl });
+          }
+        } else {
+          notInDatabase++;
+        }
+      }
+
+      let updatedCount = 0;
+      const errorsList: string[] = [];
+      const concurrency = 25;
+
+      for (let i = 0; i < toUpdate.length; i += concurrency) {
+        const chunk = toUpdate.slice(i, i + concurrency);
+        await Promise.all(
+          chunk.map(async (entry) => {
+            try {
+              const { error } = await adminSb
+                .from("movies")
+                .update({ posterurl: entry.posterUrl })
+                .eq("wikidataid", entry.wikidataid);
+              if (error) {
+                errorsList.push(`${entry.wikidataid}: ${error.message}`);
+              } else {
+                updatedCount++;
+              }
+            } catch (e: any) {
+              errorsList.push(`${entry.wikidataid}: ${e.message}`);
+            }
+          })
+        );
+      }
+
+      console.log(`[Drive Poster Sync] Concluído! Atualizados: ${updatedCount}, Já atualizados: ${alreadyUpToDate}, Não no banco: ${notInDatabase}, Erros: ${errorsList.length}`);
 
       res.json({
         success: true,
         totalDriveFiles: mappings.length,
         updatedCount,
-        skippedCount,
+        alreadyUpToDate,
+        notInDatabase,
         errorCount: errorsList.length,
         sampleUpdates: mappings.slice(0, 5)
       });

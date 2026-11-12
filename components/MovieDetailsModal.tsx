@@ -31,6 +31,7 @@ import { APP_TRANSLATIONS } from '../constants';
 import { getVideoSources, VideoSources, findAndSaveMovieVideoSource, SearchVideoResult } from '../services/videoSourceService';
 import { findAndSaveMovieBannerOrPoster, BannerSearchResult } from '../services/bannerService';
 import { getSupabase } from '../services/bd';
+import { resolveMoviePoster } from '../services/drivePosterMap';
 
 interface MovieDetailsModalProps {
   movie: Movie;
@@ -94,6 +95,15 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
   const [isSearchingBanner, setIsSearchingBanner] = useState(false);
   const [bannerSearchMessage, setBannerSearchMessage] = useState<string | null>(null);
   const [showMcpModal, setShowMcpModal] = useState(false);
+  
+  const posterRes = resolveMoviePoster(movie);
+  const [activePosterUrl, setActivePosterUrl] = useState<string>(posterRes.primaryUrl || movie.posterUrl || '');
+  const fallbackPosterUrl = movie.backupPosterUrl || posterRes.fallbackUrl;
+
+  useEffect(() => {
+    const res = resolveMoviePoster(movie);
+    setActivePosterUrl(res.primaryUrl || movie.posterUrl || '');
+  }, [movie.id, movie.wikidataId, movie.posterUrl]);
   
   const cardRef = React.useRef<HTMLDivElement>(null);
 
@@ -1252,7 +1262,7 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
               <div 
                 className="position-absolute top-0 start-0 w-100 h-100 z-0" 
                 style={{ 
-                  backgroundImage: `url("${fixUrl(details?.backdropUrl || movie.posterUrl)}")`, 
+                  backgroundImage: `url("${fixUrl(details?.backdropUrl || activePosterUrl || movie.posterUrl)}")`, 
                   backgroundSize: 'cover', 
                   backgroundPosition: 'center 20%',
                   filter: 'brightness(0.6)'
@@ -1577,12 +1587,17 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
 
           <div className="position-relative flex-grow-1 rounded overflow-hidden border border-secondary" style={{ borderRadius: '1rem' }}>
             <img 
-              src={fixUrl(movie.posterUrl) || null} 
+              src={fixUrl(activePosterUrl || movie.posterUrl) || null} 
               alt={movie.title} 
               className="w-100 h-100"
               style={{ objectFit: 'cover' }}
               referrerPolicy="no-referrer"
               crossOrigin="anonymous"
+              onError={() => {
+                if (fallbackPosterUrl && activePosterUrl !== fallbackPosterUrl) {
+                  setActivePosterUrl(fallbackPosterUrl);
+                }
+              }}
             />
             <div className="position-absolute inset-0 w-100 h-100" style={{ background: 'linear-gradient(to top, black, transparent)', top: 0, left: 0 }} />
             <div className="position-absolute bottom-0 start-0 end-0 p-4">
@@ -1745,7 +1760,7 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
       {isPlayerActive && (
         <VideoPlayer 
           src={effectiveVideoUrl || movie.videoUrl || ''} 
-          poster={fixUrl(details?.backdropUrl || movie.posterUrl)} 
+          poster={fixUrl(details?.backdropUrl || activePosterUrl || movie.posterUrl)} 
           title={displayTitle} 
           id={movie.id} 
           wikidataId={movie.wikidataId} 

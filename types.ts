@@ -16,13 +16,14 @@ export interface Movie {
   hasSubtitles: boolean;
   subtitleUrl?: string; // New field for external subtitle file
   posterUrl: string;
+  backupPosterUrl?: string; // Fallback poster (Amazon, Wikimedia Commons, etc.)
   videoUrl: string | null;
   trailerUrl?: string;
   rating: string;
   duration: string;
   director: string;
   directorId?: string; // New: Wikidata QID for the director
-  type: 'Movie' | 'Series';
+  type: string;
   sourceLabel?: string;
   cast?: string[];
   writers?: string[];
@@ -66,6 +67,7 @@ export interface FilterState {
   hasPosterOnly: boolean;
   hasVideoOnly: boolean;
   selectedTop30: string | null;
+  selectedType: string | null;
 }
 
 export interface Review {
