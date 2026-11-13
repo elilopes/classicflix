@@ -1,6 +1,9 @@
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
+export const isValidUuid = (val: unknown): val is string =>
+    typeof val === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(val);
+
 // Helper para obter variáveis de ambiente
 const getEnv = (key: string) => {
     try {
@@ -114,10 +117,10 @@ export const signInWithGoogle = async () => {
             provider: 'google'
         };
 
-        // Sincroniza usuário com o banco public.users
+        // Sincroniza usuário com o banco public.users apenas se o ID for um UUID válido
         try {
             const sb = await getSupabase();
-            if (sb && fbUser.email) {
+            if (sb && fbUser.email && isValidUuid(fbUser.uid)) {
                 await sb.from('users').upsert({
                     userid: fbUser.uid,
                     email: fbUser.email
@@ -154,9 +157,10 @@ export const signInWithWikipedia = async (wikiUser: any) => {
         localStorage.setItem('classicflix_user', JSON.stringify(wikiUser));
         try {
             const sb = await getSupabase();
-            if (sb && wikiUser.email) {
+            const wikiId = wikiUser.userid || wikiUser.id;
+            if (sb && wikiUser.email && isValidUuid(wikiId)) {
                 await sb.from('users').upsert({
-                    userid: wikiUser.userid || wikiUser.id,
+                    userid: wikiId,
                     email: wikiUser.email
                 }, { onConflict: 'userid' });
             }

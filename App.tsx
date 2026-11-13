@@ -28,7 +28,7 @@ import {
 
 import { 
   Search, Film, User, LogOut, Loader2, Plus, RefreshCw, ChevronDown, Clapperboard, Globe, TrendingUp, Download, FileText, CheckCircle, X,
-  History, Trash2, Orbit, Trophy, Cpu
+  History, Trash2, Orbit, Trophy, Cpu, Heart, Clock
 } from 'lucide-react';
 import { GalaxyView } from './components/GalaxyView';
 import { TimelineModal } from './components/TimelineModal';
@@ -43,6 +43,7 @@ import { BestReviewsModal } from './components/BestReviewsModal';
 import { McpConnectedAppsModal } from './components/McpConnectedAppsModal';
 import { WikipediaAuthModal } from './components/WikipediaAuthModal';
 import { getWikipediaAuthUrl, saveWikipediaUser } from './services/wikipediaAuthService';
+import { UserListsModal, UserListTab } from './components/UserListsModal';
 
 const getCanonicalLanguage = (rawLang: string | undefined): string => {
     if (!rawLang || rawLang === 'null' || rawLang === 'undefined') return 'Unknown';
@@ -76,6 +77,8 @@ export default function App() {
   const [showMcpModal, setShowMcpModal] = useState(false);
   const [showWikipediaModal, setShowWikipediaModal] = useState(false);
   const [wikipediaAuthData, setWikipediaAuthData] = useState<any>(null);
+  const [showUserListsModal, setShowUserListsModal] = useState(false);
+  const [userListsTab, setUserListsTab] = useState<UserListTab>('favorites');
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
   const [authUsername, setAuthUsername] = useState('');
   const [authPassword, setAuthPassword] = useState('');
@@ -85,7 +88,11 @@ export default function App() {
   const [isExporting, setIsExporting] = useState(false);
 
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [isLangMenuOpen, setIsLangMenuOpen] = useState(false);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const searchContainerRef = useRef<HTMLDivElement>(null);
+  const langMenuRef = useRef<HTMLDivElement>(null);
+  const userMenuRef = useRef<HTMLDivElement>(null);
 
   const [filters, setFilters] = useState<FilterState>({
     searchQuery: '',
@@ -121,6 +128,12 @@ export default function App() {
     const handleClickOutside = (event: MouseEvent) => {
         if (searchContainerRef.current && !searchContainerRef.current.contains(event.target as Node)) {
             setShowSuggestions(false);
+        }
+        if (langMenuRef.current && !langMenuRef.current.contains(event.target as Node)) {
+            setIsLangMenuOpen(false);
+        }
+        if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+            setIsUserMenuOpen(false);
         }
     };
     document.addEventListener("mousedown", handleClickOutside);
@@ -262,8 +275,21 @@ export default function App() {
 
   const displayedMovies = useMemo(() => filteredMovies.slice(0, visibleCount), [filteredMovies, visibleCount]);
   
-  const getState = (movieId: string) => {
-      return interactions.find(i => i.wikidataid === movieId) || { wikidataid: movieId, isfavorite: false, iswatched: false, iswatchlist: false, progress_seconds: 0 };
+  const getState = (movieIdOrWikidataId: string): UserMovieInteraction => {
+      const movieObj = databaseMovies.find(m => m.id === movieIdOrWikidataId || m.wikidataId === movieIdOrWikidataId);
+      const found = interactions.find(i =>
+        i.wikidataid === movieIdOrWikidataId ||
+        (movieObj?.wikidataId && i.wikidataid === movieObj.wikidataId) ||
+        (movieObj?.id && i.wikidataid === movieObj.id)
+      );
+      return found || {
+        wikidataid: movieObj?.wikidataId || movieIdOrWikidataId,
+        isfavorite: false,
+        iswatched: false,
+        watchlater: false,
+        iswatchlist: false,
+        progress_seconds: 0
+      };
   };
 
   const handlePosterFound = (id: string, url: string) => {
@@ -276,12 +302,25 @@ export default function App() {
       setShowSuggestions(false);
   };
 
-  const toggleList = async (wikidataId: string, field: keyof UserMovieInteraction) => {
+  const toggleList = async (movieIdOrWikidataId: string, field: keyof UserMovieInteraction) => {
     if (!user) { setShowAuthModal(true); return; }
-    const existing = interactions.find(i => i.wikidataid === wikidataId);
-    const newValue = existing ? !existing[field as 'isfavorite' | 'iswatched' | 'iswatchlist'] : true;
-    await updateInteraction(wikidataId, { [field]: newValue });
-    setInteractions(await getUserInteractions());
+    const movieObj = databaseMovies.find(m => m.id === movieIdOrWikidataId || m.wikidataId === movieIdOrWikidataId);
+    const targetKey = movieObj?.wikidataId || movieIdOrWikidataId;
+    const normalizedField = field === 'iswatchlist' ? 'watchlater' : field;
+    const existing = interactions.find(i =>
+      i.wikidataid === targetKey ||
+      (movieObj?.id && i.wikidataid === movieObj.id)
+    );
+    const currentVal = existing
+      ? Boolean((existing as any)[normalizedField] ?? (normalizedField === 'watchlater' ? existing.iswatchlist : false))
+      : false;
+    const newValue = !currentVal;
+    try {
+      await updateInteraction(targetKey, { [normalizedField]: newValue });
+      setInteractions(await getUserInteractions());
+    } catch (err) {
+      console.error("Erro ao salvar lista do usuário:", err);
+    }
   };
 
   const handleAuth = async () => {
@@ -422,7 +461,7 @@ export default function App() {
                 <button 
                   className="btn btn-link p-0 text-secondary hover-white border-0 shadow-none d-flex align-items-center"
                   onClick={() => setFilters({...filters, searchQuery: ''})}
-                  title="Limpar pesquisa"
+                  title={t.clearSearch || "Clear search"}
                 >
                   <X size={18} />
                 </button>
@@ -431,9 +470,9 @@ export default function App() {
             </div>
             
             {showSuggestions && !filters.searchQuery && mostPopularMovies.length > 0 && (
-                <div className="position-absolute top-100 start-0 w-100 bg-dark border border-secondary rounded-bottom shadow-lg mt-1" style={{ zIndex: 1000 }}>
+                <div className="position-absolute top-100 start-0 w-100 bg-dark border border-secondary rounded-bottom shadow-lg mt-1" style={{ zIndex: 1500 }}>
                     <h6 className="px-3 py-2 m-0 text-white-50 small border-bottom border-secondary fw-bold d-flex align-items-center gap-2">
-                        <TrendingUp size={14} className="text-danger" /> {appLanguage === 'pt' ? 'Mais Pesquisados' : 'Most Popular'}
+                        <TrendingUp size={14} className="text-danger" /> {t.mostPopular || 'Most Popular'}
                     </h6>
                     <div className="list-group list-group-flush">
                         {mostPopularMovies.map(movie => (
@@ -454,63 +493,72 @@ export default function App() {
             )}
           </div>
 
-          <div className="d-flex gap-2 align-items-center overflow-x-auto text-nowrap flex-nowrap py-1 no-scrollbar" style={{ WebkitOverflowScrolling: 'touch', maxWidth: '100%' }}>
-            <div className="dropdown me-1 flex-shrink-0">
-              <button className="btn btn-dark btn-sm dropdown-toggle border-secondary d-flex align-items-center gap-2" data-bs-toggle="dropdown">
+          <div className="d-flex gap-2 align-items-center flex-nowrap py-1" style={{ maxWidth: '100%' }}>
+            {/* Language Dropdown placed OUTSIDE overflow-x-auto so it is never clipped by FilterBar */}
+            <div className="position-relative flex-shrink-0" ref={langMenuRef}>
+              <button 
+                type="button"
+                className="btn btn-dark btn-sm dropdown-toggle border-secondary d-flex align-items-center gap-2"
+                onClick={() => setIsLangMenuOpen(prev => !prev)}
+                aria-expanded={isLangMenuOpen}
+              >
                 <Globe size={16} className="text-info" /> <span className="d-none d-sm-inline">{appLanguage.toUpperCase()}</span>
               </button>
-              <ul className="dropdown-menu dropdown-menu-dark dropdown-menu-end shadow border-secondary">
-                 <li><button className="dropdown-item py-2" onClick={() => setAppLanguage('en')}>🇺🇸 English</button></li>
-                 <li><button className="dropdown-item py-2" onClick={() => setAppLanguage('pt')}>🇧🇷 Português</button></li>
-                 <li><button className="dropdown-item py-2" onClick={() => setAppLanguage('it')}>🇮🇹 Italiano</button></li>
-                 <li><button className="dropdown-item py-2" onClick={() => setAppLanguage('hi')}>🇮🇳 हिन्दी</button></li>
-                 <li><button className="dropdown-item py-2" onClick={() => setAppLanguage('ru')}>🇷🇺 Русский</button></li>
-              </ul>
+              {isLangMenuOpen && (
+                <ul 
+                  className="dropdown-menu dropdown-menu-dark dropdown-menu-end shadow-lg border-secondary show" 
+                  style={{ position: 'absolute', right: 0, top: '100%', marginTop: '4px', zIndex: 2500 }}
+                >
+                   <li><button className={`dropdown-item py-2 ${appLanguage === 'en' ? 'active' : ''}`} onClick={() => { setAppLanguage('en'); setIsLangMenuOpen(false); }}>🇺🇸 English</button></li>
+                   <li><button className={`dropdown-item py-2 ${appLanguage === 'pt' ? 'active' : ''}`} onClick={() => { setAppLanguage('pt'); setIsLangMenuOpen(false); }}>🇧🇷 Português</button></li>
+                   <li><button className={`dropdown-item py-2 ${appLanguage === 'it' ? 'active' : ''}`} onClick={() => { setAppLanguage('it'); setIsLangMenuOpen(false); }}>🇮🇹 Italiano</button></li>
+                   <li><button className={`dropdown-item py-2 ${appLanguage === 'hi' ? 'active' : ''}`} onClick={() => { setAppLanguage('hi'); setIsLangMenuOpen(false); }}>🇮🇳 हिन्दी</button></li>
+                   <li><button className={`dropdown-item py-2 ${appLanguage === 'ru' ? 'active' : ''}`} onClick={() => { setAppLanguage('ru'); setIsLangMenuOpen(false); }}>🇷🇺 Русский</button></li>
+                   <li><button className={`dropdown-item py-2 ${appLanguage === 'zh' ? 'active' : ''}`} onClick={() => { setAppLanguage('zh'); setIsLangMenuOpen(false); }}>🇨🇳 中文</button></li>
+                </ul>
+              )}
             </div>
 
-            <button 
-              className="btn btn-outline-info btn-sm d-flex align-items-center gap-1 flex-shrink-0 border-info" 
-              onClick={() => setShowGalaxyView(true)}
-              title={t.galaxyOfDirectors || "Galáxia de Diretores"}
-              style={{ backgroundColor: 'rgba(0, 200, 255, 0.12)' }}
-            >
-              <Orbit size={16} className="text-info flex-shrink-0" />
-              <span className="fw-bold">{t.galaxyOfDirectors || "Galáxia 3D"}</span>
-            </button>
+            <div className="d-flex gap-2 align-items-center overflow-x-auto text-nowrap flex-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>
+              <button className="btn btn-outline-success btn-sm d-flex align-items-center gap-1 flex-shrink-0" onClick={() => setShowAddModal(true)}><Plus size={16} /><span className="d-none d-lg-inline">{t.addMovie}</span></button>
+              <button className="btn btn-outline-danger btn-sm d-flex align-items-center gap-1 flex-shrink-0" onClick={() => setShowTimelineModal(true)}><History size={16} /><span className="d-none d-lg-inline">{t.timeline}</span></button>
+              <button className="btn btn-outline-warning btn-sm d-flex align-items-center gap-1 flex-shrink-0" onClick={() => setShowConverterModal(true)}><RefreshCw size={16} /><span className="d-none d-lg-inline">{t.videoConverter}</span></button>
 
-            <button className="btn btn-outline-success btn-sm d-flex align-items-center gap-1 flex-shrink-0" onClick={() => setShowAddModal(true)}><Plus size={16} /><span className="d-none d-lg-inline">{t.addMovie}</span></button>
-            <button className="btn btn-outline-danger btn-sm d-flex align-items-center gap-1 flex-shrink-0" onClick={() => setShowTimelineModal(true)}><History size={16} /><span className="d-none d-lg-inline">{t.timeline}</span></button>
-            <button className="btn btn-outline-warning btn-sm d-flex align-items-center gap-1 flex-shrink-0" onClick={() => setShowConverterModal(true)}><RefreshCw size={16} /><span className="d-none d-lg-inline">{t.videoConverter}</span></button>
-
-            <button className="btn btn-outline-warning btn-sm d-flex align-items-center gap-1 flex-shrink-0" onClick={() => setShowBestReviewsModal(true)}>
-              <Trophy size={16} />
-              <span className="d-none d-lg-inline">{appLanguage === 'pt' ? 'Melhores Críticas' : 'Top Reviews'}</span>
-            </button>
-            <button 
-              className="btn btn-outline-info btn-sm d-flex align-items-center gap-1" 
-              onClick={() => setShowMcpModal(true)}
-              title="Model Context Protocol & Google Connected Apps Platform"
-            >
-              <Cpu size={16} />
-              <span className="d-none d-lg-inline">MCP / Connected Apps</span>
-            </button>
-            
-            {user?.email === 'liclopes@gmail.com' && (
-              <button 
-                className="btn btn-outline-danger btn-sm d-flex align-items-center gap-1" 
-                onClick={() => setShowAdminDeleteModal(true)}
-                title="Painel Admin - Excluir Produções"
-              >
-                <Trash2 size={16} />
-                <span className="d-none d-lg-inline">Admin</span>
+              <button className="btn btn-outline-warning btn-sm d-flex align-items-center gap-1 flex-shrink-0" onClick={() => setShowBestReviewsModal(true)}>
+                <Trophy size={16} />
+                <span className="d-none d-lg-inline">{t.topReviews || 'Top Reviews'}</span>
               </button>
-            )}
+              <button 
+                className="btn btn-outline-info btn-sm d-flex align-items-center gap-1 flex-shrink-0" 
+                onClick={() => setShowMcpModal(true)}
+                title="Model Context Protocol & Google Connected Apps Platform"
+              >
+                <Cpu size={16} />
+                <span className="d-none d-lg-inline">MCP / Connected Apps</span>
+              </button>
+              
+              {user?.email === 'liclopes@gmail.com' && (
+                <button 
+                  className="btn btn-outline-danger btn-sm d-flex align-items-center gap-1 flex-shrink-0" 
+                  onClick={() => setShowAdminDeleteModal(true)}
+                  title="Painel Admin - Excluir Produções"
+                >
+                  <Trash2 size={16} />
+                  <span className="d-none d-lg-inline">Admin</span>
+                </button>
+              )}
 
-            <button className="btn btn-outline-primary btn-sm" onClick={refreshData}><RefreshCw size={16} /></button>
+              <button className="btn btn-outline-primary btn-sm flex-shrink-0" onClick={refreshData}><RefreshCw size={16} /></button>
+            </div>
             
             {user ? (
-              <div className="dropdown">
-                <button className="btn btn-dark dropdown-toggle border-secondary d-flex align-items-center gap-2" data-bs-toggle="dropdown">
+              <div className="position-relative flex-shrink-0" ref={userMenuRef}>
+                <button 
+                  type="button"
+                  className="btn btn-dark btn-sm dropdown-toggle border-secondary d-flex align-items-center gap-2"
+                  onClick={() => setIsUserMenuOpen(prev => !prev)}
+                  aria-expanded={isUserMenuOpen}
+                >
                   {user.provider === 'wikipedia' ? (
                     <div className="bg-white rounded-circle p-1 d-flex align-items-center justify-content-center" style={{ width: '20px', height: '20px' }}>
                       <img 
@@ -522,22 +570,87 @@ export default function App() {
                   ) : (
                     <User size={18} className="text-danger" />
                   )}
-                  <span>{user.displayName || user.email?.split('@')[0]}</span>
+                  <span className="d-none d-sm-inline">{user.displayName || user.email?.split('@')[0]}</span>
                 </button>
-                <ul className="dropdown-menu dropdown-menu-dark dropdown-menu-end shadow border-secondary">
-                  {user.provider === 'wikipedia' && (
-                    <li className="px-3 py-2 border-bottom border-secondary small">
-                      <div className="text-white-50 xsmall text-uppercase">{appLanguage === 'pt' ? 'Conta Wikipedia' : 'Wikipedia Account'}</div>
-                      <div className="fw-bold text-info">@{user.displayName}</div>
-                      {user.user_metadata?.edit_count !== undefined && (
-                        <div className="text-white-50 xsmall">{user.user_metadata.edit_count} {appLanguage === 'pt' ? 'edições' : 'edits'}</div>
-                      )}
+                {isUserMenuOpen && (
+                  <ul 
+                    className="dropdown-menu dropdown-menu-dark dropdown-menu-end shadow-lg border-secondary show" 
+                    style={{ position: 'absolute', right: 0, top: '100%', marginTop: '4px', zIndex: 2500, minWidth: '230px' }}
+                  >
+                    {user.provider === 'wikipedia' && (
+                      <li className="px-3 py-2 border-bottom border-secondary small">
+                        <div className="text-white-50 xsmall text-uppercase">{appLanguage === 'pt' ? 'Conta Wikipedia' : 'Wikipedia Account'}</div>
+                        <div className="fw-bold text-info">@{user.displayName}</div>
+                        {user.user_metadata?.edit_count !== undefined && (
+                          <div className="text-white-50 xsmall">{user.user_metadata.edit_count} {appLanguage === 'pt' ? 'edições' : 'edits'}</div>
+                        )}
+                      </li>
+                    )}
+                    <li>
+                      <h6 className="dropdown-header text-uppercase xsmall text-white-50 fw-bold pt-2 pb-1">
+                        {t.myLists || 'Minhas Listas'}
+                      </h6>
                     </li>
-                  )}
-                  <li><button className="dropdown-item py-2" onClick={() => signOutUser()}><LogOut size={16} className="me-2" /> {t.logout}</button></li>
-                </ul>
+                    <li>
+                      <button
+                        className="dropdown-item py-2 d-flex align-items-center justify-content-between gap-2"
+                        onClick={() => {
+                          setUserListsTab('favorites');
+                          setShowUserListsModal(true);
+                          setIsUserMenuOpen(false);
+                        }}
+                      >
+                        <span className="d-flex align-items-center gap-2">
+                          <Heart size={15} className="text-danger" fill="currentColor" />
+                          <span>{t.favorites || 'Favoritos'}</span>
+                        </span>
+                        <span className="badge bg-danger rounded-pill">
+                          {interactions.filter(i => i.isfavorite).length}
+                        </span>
+                      </button>
+                    </li>
+                    <li>
+                      <button
+                        className="dropdown-item py-2 d-flex align-items-center justify-content-between gap-2"
+                        onClick={() => {
+                          setUserListsTab('watchlater');
+                          setShowUserListsModal(true);
+                          setIsUserMenuOpen(false);
+                        }}
+                      >
+                        <span className="d-flex align-items-center gap-2">
+                          <Clock size={15} className="text-primary" />
+                          <span>{t.watchLater || 'Ver Depois'}</span>
+                        </span>
+                        <span className="badge bg-primary rounded-pill">
+                          {interactions.filter(i => i.watchlater || i.iswatchlist).length}
+                        </span>
+                      </button>
+                    </li>
+                    <li>
+                      <button
+                        className="dropdown-item py-2 d-flex align-items-center justify-content-between gap-2"
+                        onClick={() => {
+                          setUserListsTab('watched');
+                          setShowUserListsModal(true);
+                          setIsUserMenuOpen(false);
+                        }}
+                      >
+                        <span className="d-flex align-items-center gap-2">
+                          <CheckCircle size={15} className="text-success" />
+                          <span>{t.alreadyWatched || 'Já Assistidos'}</span>
+                        </span>
+                        <span className="badge bg-success rounded-pill">
+                          {interactions.filter(i => i.iswatched).length}
+                        </span>
+                      </button>
+                    </li>
+                    <li><hr className="dropdown-divider border-secondary my-1" /></li>
+                    <li><button className="dropdown-item py-2" onClick={() => { signOutUser(); setIsUserMenuOpen(false); }}><LogOut size={16} className="me-2" /> {t.logout}</button></li>
+                  </ul>
+                )}
               </div>
-            ) : <button className="btn btn-danger btn-sm px-3 shadow" onClick={() => setShowAuthModal(true)}>{t.login}</button>}
+            ) : <button className="btn btn-danger btn-sm px-3 shadow flex-shrink-0" onClick={() => setShowAuthModal(true)}>{t.login}</button>}
           </div>
         </div>
       </nav>
@@ -670,7 +783,7 @@ export default function App() {
         <h5 className="fw-bold mb-3 text-danger">LIBRARY CLASSICFLIX</h5>
         <p className="text-secondary small mb-2">{t.footerText}</p>
         <p className="text-white-50 small m-0 fw-bold">
-          {t.totalMovies}: {databaseMovies.length} | Poster's Movies: {databaseMovies.filter(m => m.posterUrl && !m.posterUrl.includes('placehold.co') && !m.posterUrl.includes('ui-avatars.com')).length}
+          {t.totalMovies}: {databaseMovies.length} | {t.postersMovies || "Poster's Movies"}: {databaseMovies.filter(m => m.posterUrl && !m.posterUrl.includes('placehold.co') && !m.posterUrl.includes('ui-avatars.com')).length}
         </p>
       </footer>
       
@@ -689,10 +802,10 @@ export default function App() {
             boxShadow: '0 4px 20px rgba(40, 167, 69, 0.45)',
             background: 'rgba(10, 30, 20, 0.95)'
           }}
-          title={appLanguage === 'pt' ? 'Mini Jogos' : 'Mini Games'}
+          title={t.miniGames || 'Mini Games'}
         >
           <Gamepad2 size={20} className="text-success flex-shrink-0" />
-          <span className="fw-bold text-white small text-nowrap label-text">{appLanguage === 'pt' ? '🎮 Mini Jogos' : '🎮 Mini Games'}</span>
+          <span className="fw-bold text-white small text-nowrap label-text">🎮 {t.miniGames || 'Mini Games'}</span>
         </button>
       )}
 
@@ -860,6 +973,23 @@ export default function App() {
         }}
         appLanguage={appLanguage}
         authUrlData={wikipediaAuthData}
+      />
+
+      <UserListsModal
+        isOpen={showUserListsModal}
+        onClose={() => setShowUserListsModal(false)}
+        initialTab={userListsTab}
+        interactions={interactions}
+        movies={databaseMovies}
+        onSelectMovie={(movie) => handleMovieOpen(movie)}
+        onToggleInteraction={toggleList}
+        onRefreshLists={async () => {
+          if (user) {
+            setInteractions(await getUserInteractions());
+          }
+        }}
+        t={t}
+        language={appLanguage}
       />
     </div>
   );

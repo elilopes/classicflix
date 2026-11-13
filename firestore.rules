@@ -44,10 +44,54 @@ service cloud.firestore {
              data.createdAt is string;
     }
 
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidUserListEntry(data, userId, wikidataId) {
+      return data.keys().hasAll(['userid', 'wikidataid', 'isfavorite', 'iswatched', 'watchlater', 'lastupdated']) &&
+             data.keys().hasOnly(['userid', 'wikidataid', 'isfavorite', 'iswatched', 'watchlater', 'lastupdated']) &&
+             data.userid is string &&
+             data.userid.size() <= 128 &&
+             data.userid == userId &&
+             data.userid == request.auth.uid &&
+             data.wikidataid is string &&
+             data.wikidataid == wikidataId &&
+             isValidId(data.wikidataid) &&
+             data.isfavorite is bool &&
+             data.iswatched is bool &&
+             data.watchlater is bool &&
+             data.lastupdated is timestamp &&
+             data.lastupdated == request.time;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
     
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    match /users/{userId}/userlists/{wikidataId} {
+      allow get: if isOwner(userId) && isValidId(userId) && isValidId(wikidataId);
+      allow list: if isOwner(userId) && isValidId(userId) && resource.data.userid == request.auth.uid;
+      allow create: if isOwner(userId) &&
+                      isValidId(userId) &&
+                      isValidId(wikidataId) &&
+                      request.auth.token.email_verified == true &&
+                      isValidUserListEntry(request.resource.data, userId, wikidataId);
+      allow update: if isOwner(userId) &&
+                      isValidId(userId) &&
+                      isValidId(wikidataId) &&
+                      request.auth.token.email_verified == true &&
+                      isValidUserListEntry(request.resource.data, userId, wikidataId) &&
+                      request.resource.data.userid == resource.data.userid &&
+                      request.resource.data.wikidataid == resource.data.wikidataid &&
+                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['isfavorite', 'iswatched', 'watchlater', 'lastupdated']);
+      allow delete: if isOwner(userId) && isValidId(userId) && isValidId(wikidataId);
+    }
+
     match /quiz_scores/{scoreId} {
       allow read: if true;
       allow create: if isAuthenticated() && 

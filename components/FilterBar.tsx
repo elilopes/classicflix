@@ -4,7 +4,7 @@ import { motion } from 'motion/react';
 import { 
   Filter, Star, CalendarDays, Languages, Palette, Layers, 
   Clock4, MonitorPlay, Megaphone, Trophy, LayoutGrid, Type, TrendingUp, Image as ImageIcon, Play,
-  ChevronLeft, ChevronRight, Orbit, Film
+  ChevronLeft, ChevronRight, Film
 } from 'lucide-react';
 import { FilterState, AppLanguage } from '../types';
 import { 
@@ -124,7 +124,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
         >
             <Film size={14} className="text-secondary flex-shrink-0" />
             <select className="form-select bg-transparent border-0 text-white shadow-none py-0 small flex-grow-1 text-truncate" style={{ width: '0', minWidth: '0' }} value={filters.selectedType || ""} onChange={e => setFilters({...filters, selectedType: e.target.value || null})}>
-                <option className="bg-dark text-white" value="">{appLanguage === 'pt' ? 'Tipo (Todos)' : 'Type (All)'}</option>
+                <option className="bg-dark text-white" value="">{t.typeAll || 'Type (All)'}</option>
                 <option className="bg-dark text-white" value="film">Film</option>
                 <option className="bg-dark text-white" value="short film">Short Film</option>
                 <option className="bg-dark text-white" value="television film">Television Film</option>
@@ -197,7 +197,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
         >
             <Filter size={14} className="text-secondary flex-shrink-0" />
             <select className="form-select bg-transparent border-0 text-white shadow-none py-0 small flex-grow-1 text-truncate" style={{ width: '0', minWidth: '0' }} value={filters.selectedGenre || ""} onChange={e => setFilters({...filters, selectedGenre: e.target.value || null})}>
-                <option className="bg-dark text-white" value="">Gêneros</option>
+                <option className="bg-dark text-white" value="">{t.genres || 'Genres'}</option>
                 {sortedGenres.map(g => (
                     <option className="bg-dark text-white" key={g} value={g}>
                         {g} ({genreCounts[g]})
@@ -249,7 +249,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
         >
             <Languages size={14} className="text-secondary flex-shrink-0" />
             <select className="form-select bg-transparent border-0 text-white shadow-none py-0 small flex-grow-1 text-truncate" style={{ width: '0', minWidth: '0' }} value={filters.selectedLanguage || ""} onChange={e => setFilters({...filters, selectedLanguage: e.target.value || null})}>
-                <option className="bg-dark text-white" value="">Idiomas</option>
+                <option className="bg-dark text-white" value="">{t.languages || t.language || 'Languages'}</option>
                 {sortedLanguages.map(l => (
                     <option className="bg-dark text-white" key={l} value={l}>
                         {l} ({languageCounts[l]})
@@ -267,7 +267,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
         >
             <Palette size={14} className="text-secondary flex-shrink-0" />
             <select className="form-select bg-transparent border-0 text-white shadow-none py-0 small flex-grow-1 text-truncate" style={{ width: '0', minWidth: '0' }} value={filters.selectedColor || ""} onChange={e => setFilters({...filters, selectedColor: e.target.value || null})}>
-                <option className="bg-dark text-white" value="">Cor</option>
+                <option className="bg-dark text-white" value="">{t.color || 'Color'}</option>
                 {COLORS.map(c => (
                     <option className="bg-dark text-white" key={c} value={c}>{c}</option>
                 ))}
@@ -283,7 +283,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
         >
             <Layers size={14} className="text-secondary flex-shrink-0" />
             <select className="form-select bg-transparent border-0 text-white shadow-none py-0 small flex-grow-1 text-truncate" style={{ width: '0', minWidth: '0' }} value={filters.selectedTheme || ""} onChange={e => setFilters({...filters, selectedTheme: e.target.value || null})}>
-                <option className="bg-dark text-white" value="">Temas</option>
+                <option className="bg-dark text-white" value="">{t.themes || 'Themes'}</option>
                 {sortedThemes.map(th => (
                     <option className="bg-dark text-white" key={th} value={th}>
                         {th} ({themeCounts[th]})
@@ -301,7 +301,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({
         >
             <Clock4 size={14} className="text-secondary flex-shrink-0" />
             <select className="form-select bg-transparent border-0 text-white shadow-none py-0 small flex-grow-1 text-truncate" style={{ width: '0', minWidth: '0' }} value={filters.selectedDuration || ""} onChange={e => setFilters({...filters, selectedDuration: (e.target.value as any) || null})}>
-                <option className="bg-dark text-white" value="">Duração</option>
+                <option className="bg-dark text-white" value="">{t.duration || 'Duration'}</option>
                 {DURATIONS.map(d => (
                     <option className="bg-dark text-white" key={d.id} value={d.id}>
                         {d.label[appLanguage] || d.label.en}
@@ -319,9 +319,9 @@ export const FilterBar: React.FC<FilterBarProps> = ({
         >
             <MonitorPlay size={14} className="text-secondary flex-shrink-0" />
             <select className="form-select bg-transparent border-0 text-white shadow-none py-0 small flex-grow-1 text-truncate" style={{ width: '0', minWidth: '0' }} value={filters.hasSubtitles == null ? "" : String(filters.hasSubtitles)} onChange={e => setFilters({...filters, hasSubtitles: e.target.value === "" ? null : e.target.value === "true"})}>
-                <option className="bg-dark text-white" value="">Legendas</option>
-                <option className="bg-dark text-white" value="true">Com Legenda</option>
-                <option className="bg-dark text-white" value="false">Sem Legenda</option>
+                <option className="bg-dark text-white" value="">{t.subtitles || 'Subtitles'}</option>
+                <option className="bg-dark text-white" value="true">{t.withSubtitles || 'With Subtitles'}</option>
+                <option className="bg-dark text-white" value="false">{t.withoutSubtitles || 'No Subtitles'}</option>
             </select>
         </motion.div>
 

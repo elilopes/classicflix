@@ -1,4 +1,4 @@
-import { getSupabase, getCurrentUser } from './bd';
+import { getSupabase, getCurrentUser, isValidUuid } from './bd';
 
 export interface UserScore {
     userid: string;
@@ -13,7 +13,7 @@ export const getUserScore = async (): Promise<UserScore | null> => {
     const supabase = await getSupabase();
     if (!supabase) return null;
     const user = await getCurrentUser();
-    if (!user) return null;
+    if (!user || !isValidUuid(user.id)) return null;
 
     const { data, error } = await supabase
         .from('userscore')
@@ -32,7 +32,7 @@ export const updateUserScore = async (gameType: 'quizscore' | 'stopscore' | 'emo
     const supabase = await getSupabase();
     if (!supabase) return;
     const user = await getCurrentUser();
-    if (!user) return;
+    if (!user || !isValidUuid(user.id)) return;
 
     // Primeiro, tenta buscar o score atual
     const { data: currentScore } = await supabase

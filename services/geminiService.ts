@@ -1,65 +1,41 @@
-import { GoogleGenAI, Type } from "@google/genai";
 import { Movie } from "../types";
 
-// Helper to ensure API key is available, prompting user if necessary in the browser
-export const ensureApiKey = async () => {
-    if (typeof window !== 'undefined' && (window as any).aistudio) {
-        const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || (window.process?.env as any)?.GEMINI_API_KEY || (window.process?.env as any)?.API_KEY;
-        if (!apiKey) {
-            const hasKey = await (window as any).aistudio.hasSelectedApiKey();
-            if (!hasKey) {
-                await (window as any).aistudio.openSelectKey();
-            }
-        }
-    }
-};
+export interface QuizQuestion {
+  question: string;
+  options: string[];
+  correctAnswer: number;
+  explanation: string;
+}
 
-// Helper to initialize the AI client using process.env.GEMINI_API_KEY as per guidelines
-const getAIClient = () => {
-    const envStr = JSON.stringify(window.process?.env || {});
-    const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || (window.process?.env as any)?.GEMINI_API_KEY || (window.process?.env as any)?.API_KEY;
-    if (!apiKey) {
-        throw new Error(`Gemini API Key is not configured. Env: ${envStr}`);
-    }
-    return new GoogleGenAI({ apiKey });
-};
+export interface ChatHistoryMessage {
+  role: 'user' | 'model';
+  text: string;
+}
 
-// Fix: Added missing export for extractMetadataFromUrl requested in AddMovieModal.tsx
+async function postGeminiJson<T>(endpoint: string, payload: unknown): Promise<T> {
+  const response = await fetch(`/api/gemini/${endpoint}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    let message = `Request failed with status ${response.status}`;
+    try {
+      const errData = await response.json();
+      if (errData?.error) message = errData.error;
+    } catch {
+      // ignore non-JSON error body
+    }
+    throw new Error(message);
+  }
+
+  return response.json();
+}
+
 export const extractMetadataFromUrl = async (url: string): Promise<Partial<Movie>> => {
   try {
-    await ensureApiKey();
-    const ai = getAIClient();
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-pro",
-      contents: `Extract movie or series metadata from this URL: ${url}. 
-      If the URL is from Wikidata, IMDb, TMDb, or Archive.org, use your internal knowledge to provide complete details for that specific production.
-      If you can identify the movie from the URL, provide its details even if they are not explicitly on the page.
-      Focus on: title, year, director, cast, genres, themes, and a good description.`,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            title: { type: Type.STRING },
-            year: { type: Type.INTEGER },
-            description: { type: Type.STRING },
-            director: { type: Type.STRING },
-            genres: { type: Type.ARRAY, items: { type: Type.STRING } },
-            themes: { type: Type.ARRAY, items: { type: Type.STRING } },
-            cast: { type: Type.ARRAY, items: { type: Type.STRING } },
-            type: { type: Type.STRING, description: "'Movie' or 'Series'" },
-            language: { type: Type.STRING },
-            rating: { type: Type.STRING },
-            duration: { type: Type.STRING }
-          },
-          required: ["title"]
-        }
-      }
-    });
-
-    // Directly accessing .text property as per guidelines
-    const jsonText = response.text || "{}";
-    return JSON.parse(jsonText);
+    return await postGeminiJson<Partial<Movie>>('extract-metadata', { url });
   } catch (error) {
     console.error("Extraction error:", error);
     return { title: "New Movie" };
@@ -68,153 +44,154 @@ export const extractMetadataFromUrl = async (url: string): Promise<Partial<Movie
 
 export const searchCatalogWithAI = async (query: string, availableMovies: Movie[]): Promise<{ matchedIds: string[], reasoning: string }> => {
   try {
-    await ensureApiKey();
-    const ai = getAIClient();
-    const movieContext = availableMovies.map(m => 
-      `ID: ${m.id}, Title: ${m.title}, Genres: ${(Array.isArray(m.genres) ? m.genres : []).join(", ")}, Year: ${m.year}, Desc: ${m.description}, Lang: ${m.language}`
-    ).join("\n");
-
-    const systemInstruction = `You are a movie recommendation engine for a specific catalog of public domain movies. 
-    Analyze the user's search query and the provided Movie List.
-    Return the IDs of the movies that best match the query.
-    Return a short "reasoning" explaining why you picked these movies.`;
-
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: `Movie List:\n${movieContext}\n\nUser Query: "${query}"`,
-      config: {
-        systemInstruction: systemInstruction,
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            matchedIds: { type: Type.ARRAY, items: { type: Type.STRING } },
-            reasoning: { type: Type.STRING }
-          },
-          required: ["matchedIds", "reasoning"]
-        }
-      }
+    const compactMovies = availableMovies.map(m => ({
+      id: m.id,
+      title: m.title,
+      genres: m.genres,
+      year: m.year,
+      description: m.description,
+      language: m.language,
+    }));
+    return await postGeminiJson<{ matchedIds: string[], reasoning: string }>('search-catalog', {
+      query,
+      availableMovies: compactMovies,
     });
-
-    const jsonText = response.text || "{}";
-    return JSON.parse(jsonText);
   } catch (error) {
     return { matchedIds: [], reasoning: "AI search unavailable." };
   }
 };
 
 export const generateMovieTrivia = async (title: string, year: number): Promise<string[]> => {
-    try {
-        await ensureApiKey();
-        const ai = getAIClient();
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: `Give me 4 interesting, lesser-known trivia facts about the movie "${title}" from ${year}. Return ONLY a JSON array of strings.`,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: { type: Type.ARRAY, items: { type: Type.STRING } }
-            }
-        });
-        return JSON.parse(response.text || "[]");
-    } catch (e) { return ["Trivia unavailable."]; }
-}
+  try {
+    const data = await postGeminiJson<{ trivia: string[] }>('trivia', { title, year });
+    return Array.isArray(data.trivia) ? data.trivia : ["Trivia unavailable."];
+  } catch (e) {
+    return ["Trivia unavailable."];
+  }
+};
 
 export const generateCriticalAnalysis = async (title: string, year: number, language: string): Promise<string> => {
-    try {
-        await ensureApiKey();
-        const ai = getAIClient();
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-pro", 
-            contents: `Write a deep, engaging critical analysis of the classic movie "${title}" (${year}) in ${language === 'pt' ? 'Portuguese' : 'English'}. Include historical significance, visual style and cultural impact. Use Markdown.`,
-        });
-        return response.text || "Analysis unavailable.";
-    } catch (e) { return "Could not generate analysis."; }
+  try {
+    const data = await postGeminiJson<{ text: string }>('critical-analysis', { title, year, language });
+    return data.text || "Analysis unavailable.";
+  } catch (e) {
+    return "Could not generate analysis.";
+  }
 };
 
 export const generateCriticsSummary = async (title: string, year: number, language: string): Promise<string> => {
-    try {
-        await ensureApiKey();
-        const ai = getAIClient();
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-pro", 
-            contents: `Analyze the critical reception of the movie "${title}" (${year}) in ${language === 'pt' ? 'Portuguese' : 'English'}. Mention consensus, praises and legacy. Use Markdown.`,
-        });
-        return response.text || "Critics summary unavailable.";
-    } catch (e) { return "Could not fetch critics summary."; }
-}
+  try {
+    const data = await postGeminiJson<{ text: string }>('critics-summary', { title, year, language });
+    return data.text || "Critics summary unavailable.";
+  } catch (e) {
+    return "Could not fetch critics summary.";
+  }
+};
 
 export const generateCinemaHistory = async (title: string, year: number, language: string): Promise<string> => {
-    try {
-        await ensureApiKey();
-        const ai = getAIClient();
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-pro", 
-            contents: `Provide historical context about cinema in ${year}, the year "${title}" was released. What were the major trends, technological advances, and concurrent classics? Answer in ${language === 'pt' ? 'Portuguese' : 'English'}. Use Markdown.`,
-        });
-        return response.text || "History context unavailable.";
-    } catch (e) { return "Could not generate cinema history."; }
-}
+  try {
+    const data = await postGeminiJson<{ text: string }>('cinema-history', { title, year, language });
+    return data.text || "History context unavailable.";
+  } catch (e) {
+    return "Could not generate cinema history.";
+  }
+};
 
 export const generateMovieEmojis = async (title: string): Promise<string> => {
-    try {
-        const ai = getAIClient();
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: `Represent the movie title "${title}" using exactly 3 to 6 emojis or symbols. Return ONLY the emojis, no text.`,
-        });
-        return response.text?.trim() || "🎬❓";
-    } catch (e) {
-        console.error("Emoji generation error:", e);
-        return "🎬❓";
-    }
+  try {
+    const data = await postGeminiJson<{ text: string }>('movie-emojis', { title });
+    return data.text?.trim() || "🎬❓";
+  } catch (e) {
+    console.error("Emoji generation error:", e);
+    return "🎬❓";
+  }
 };
 
 export const generateMovieHint = async (title: string, year: number): Promise<string> => {
-    try {
-        const ai = getAIClient();
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: `Give a very short, one-sentence hint for the movie "${title}" (${year}) without mentioning its title.`,
-        });
-        return response.text?.trim() || `Released in ${year}`;
-    } catch (e) {
-        return `Released in ${year}`;
-    }
+  try {
+    const data = await postGeminiJson<{ text: string }>('movie-hint', { title, year });
+    return data.text?.trim() || `Released in ${year}`;
+  } catch (e) {
+    return `Released in ${year}`;
+  }
 };
 
 export const validateAdedonhaAnswer = async (category: string, letter: string, answer: string): Promise<boolean> => {
   try {
-    await ensureApiKey();
-    const ai = getAIClient();
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: `Você é um juiz do jogo Adedonha (Stop). 
-    A categoria é: ${category} (Títulos de filmes, Diretores, Desenhos Animados ou Temas de filmes).
-    A letra obrigatória é: ${letter}.
-    O jogador respondeu: "${answer}".
-    
-    Responda APENAS "TRUE" se a resposta for válida para a categoria e começar com a letra (ignore acentos e pequenos erros de digitação). 
-    Responda "FALSE" se for inválida ou não começar com a letra.
-    Exemplo: Categoria "Diretores", Letra "S", Resposta "Steven Spilberg" -> TRUE (mesmo com erro no nome).
-    Exemplo: Categoria "Títulos", Letra "A", Resposta "O Auto da Compadecida" -> TRUE (ignora o artigo "O" se a palavra principal começar com A).`
-    });
-    
-    const text = response.text || "FALSE";
-    return text.toUpperCase().includes("TRUE");
+    const data = await postGeminiJson<{ valid: boolean }>('validate-adedonha', { category, letter, answer });
+    return Boolean(data.valid);
   } catch (error) {
     console.error("AI Validation error:", error);
     return false;
   }
 };
 
-export const createChatSession = (catalog: Movie[], language: string) => {
-    const ai = getAIClient();
-    const catalogSummary = catalog.map(m => `- ${m.title} (${m.year})`).join('\n');
-    const systemInstruction = `You are "Cine-Sage", an expert on classic cinema. Answer in ${language === 'pt' ? 'Portuguese' : 'English'}. Catalog: ${catalogSummary}`;
-    return ai.chats.create({
-        model: "gemini-2.5-flash",
-        config: { systemInstruction }
-    });
+export const generateMovieQuiz = async (movie: { title: string; titlePt?: string; year: number; director?: string }): Promise<QuizQuestion[]> => {
+  const data = await postGeminiJson<{ questions: QuizQuestion[] }>('quiz', movie);
+  if (!Array.isArray(data.questions)) {
+    throw new Error("Invalid quiz payload returned by server.");
+  }
+  return data.questions;
+};
+
+export const streamAssistantChat = async (params: {
+  catalog: Movie[];
+  language: string;
+  history: ChatHistoryMessage[];
+  message: string;
+  onChunk: (chunkText: string) => void;
+}): Promise<void> => {
+  const compactCatalog = params.catalog.map(m => ({ title: m.title, year: m.year }));
+  const response = await fetch('/api/gemini/chat/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      catalog: compactCatalog,
+      language: params.language,
+      history: params.history,
+      message: params.message,
+    }),
+  });
+
+  if (!response.ok || !response.body) {
+    let message = `Chat request failed with status ${response.status}`;
+    try {
+      const errData = await response.json();
+      if (errData?.error) message = errData.error;
+    } catch {
+      // ignore non-JSON error body
+    }
+    throw new Error(message);
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const events = buffer.split('\n\n');
+    buffer = events.pop() || '';
+
+    for (const event of events) {
+      const lines = event.split('\n');
+      for (const line of lines) {
+        if (!line.startsWith('data:')) continue;
+        const jsonStr = line.slice(5).trim();
+        if (!jsonStr) continue;
+        const parsed = JSON.parse(jsonStr);
+        if (parsed.error) {
+          throw new Error(parsed.error);
+        }
+        if (parsed.text) {
+          params.onChunk(parsed.text);
+        }
+      }
+    }
+  }
 };
 
 export const findDirectorForMovie = async (title: string, year: number | null): Promise<{ director: string, wikidataId?: string }> => {

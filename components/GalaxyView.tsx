@@ -3,7 +3,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Instances, Instance, OrbitControls, Text, Html } from '@react-three/drei';
 import * as THREE from 'three';
 import { Movie } from '../types';
-import { X, ZoomIn, ZoomOut, Award, Layers, Compass, Play, Film, Sparkles, Eye } from 'lucide-react';
+import { X, ZoomIn, ZoomOut, Award, Compass, Play, Film } from 'lucide-react';
 
 interface GalaxyViewProps {
   movies: Movie[];
@@ -12,22 +12,106 @@ interface GalaxyViewProps {
   t: any;
 }
 
-const MovieCard = ({ data, hoveredMovie, setHoveredMovie, onMovieClick }: any) => {
+const createStarGeometry = (outerRadius = 7.5, innerRadius = 3.4, spikes = 5) => {
+  const shape = new THREE.Shape();
+  for (let i = 0; i < spikes * 2; i++) {
+    const radius = i % 2 === 0 ? outerRadius : innerRadius;
+    const angle = (i * Math.PI) / spikes - Math.PI / 2;
+    const x = Math.cos(angle) * radius;
+    const y = Math.sin(angle) * radius;
+    if (i === 0) shape.moveTo(x, y);
+    else shape.lineTo(x, y);
+  }
+  shape.closePath();
+
+  const extrudeSettings = {
+    depth: 2.2,
+    bevelEnabled: true,
+    bevelSegments: 2,
+    steps: 1,
+    bevelSize: 0.7,
+    bevelThickness: 0.7,
+  };
+  const geom = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+  geom.center();
+  return geom;
+};
+
+const DirectorStar = ({ dir, starGeometry, onSelect }: { dir: any; starGeometry: THREE.ExtrudeGeometry; onSelect: (dir: any) => void }) => {
+  const meshRef = useRef<THREE.Mesh>(null);
+
+  useFrame((_, delta) => {
+    if (meshRef.current) {
+      meshRef.current.rotation.y += delta * 0.45;
+    }
+  });
+
+  return (
+    <group position={dir.position}>
+      <mesh
+        ref={meshRef}
+        geometry={starGeometry}
+        onClick={(e) => {
+          e.stopPropagation();
+          onSelect(dir);
+        }}
+        onPointerOver={(e) => {
+          e.stopPropagation();
+          document.body.style.cursor = 'pointer';
+        }}
+        onPointerOut={() => {
+          document.body.style.cursor = 'auto';
+        }}
+      >
+        <meshStandardMaterial
+          color={dir.color}
+          emissive={dir.emissive}
+          emissiveIntensity={2.5}
+          metalness={0.8}
+          roughness={0.2}
+        />
+      </mesh>
+      <Text
+        position={[0, 12, 0]}
+        fontSize={4.5}
+        color="white"
+        anchorX="center"
+        anchorY="middle"
+        outlineWidth={0.4}
+        outlineColor="#000000"
+      >
+        ★ {dir.name} ({dir.awardedMoviesCount})
+      </Text>
+    </group>
+  );
+};
+
+const MovieCard = ({
+  data,
+  hoveredMovie,
+  onHoverStart,
+  onHoverEnd,
+  onCancelHoverClear,
+  onMovieClick,
+  bumpMap,
+  t
+}: any) => {
   const ref = useRef<THREE.Group>(null);
+  const pointerDownPos = useRef<{ x: number; y: number } | null>(null);
   const isHovered = hoveredMovie?.movie.id === data.movie.id;
-  
+
   useFrame((state) => {
     if (!ref.current) return;
-    
+
     if (isHovered) {
-      ref.current.quaternion.slerp(state.camera.quaternion, 0.1);
+      ref.current.quaternion.slerp(state.camera.quaternion, 0.15);
     } else {
       const time = state.clock.getElapsedTime();
       const currentAngle = data.angle + time * data.speed;
-      
+
       const x = data.directorPos.x + Math.cos(currentAngle) * data.orbitRadius;
       const z = data.directorPos.z + Math.sin(currentAngle) * data.orbitRadius;
-      
+
       ref.current.position.set(x, data.worldPos.y, z);
       ref.current.rotation.y += 0.01;
     }
@@ -35,42 +119,75 @@ const MovieCard = ({ data, hoveredMovie, setHoveredMovie, onMovieClick }: any) =
 
   return (
     <group ref={ref} position={data.worldPos}>
-      <Instance 
-        color={isHovered ? "white" : "#00ccff"} 
-        scale={isHovered ? 1.8 : 1}
-      />
-      {/* Hitbox for interaction - use onClick rather than onPointerDown so touch dragging does not trigger movie click */}
-      <mesh 
+      {/* Visible 3D movie card mesh */}
+      <mesh scale={isHovered ? 1.7 : 1}>
+        <boxGeometry args={[1.8, 2.6, 0.16]} />
+        <meshStandardMaterial
+          roughness={0.45}
+          metalness={0.5}
+          color={isHovered ? "#ffffff" : "#00ccff"}
+          emissive={isHovered ? "#00ffff" : "#00ccff"}
+          emissiveIntensity={isHovered ? 1.5 : 0.65}
+          bumpMap={bumpMap}
+          bumpScale={0.05}
+        />
+      </mesh>
+
+      {/* Generous invisible hitbox */}
+      <mesh
+        onPointerDown={(e) => {
+          pointerDownPos.current = { x: e.clientX, y: e.clientY };
+        }}
         onClick={(e) => {
           e.stopPropagation();
+          if (pointerDownPos.current) {
+            const dx = e.clientX - pointerDownPos.current.x;
+            const dy = e.clientY - pointerDownPos.current.y;
+            if (Math.hypot(dx, dy) > 10) return;
+          }
           onMovieClick(data.movie);
         }}
         onPointerOver={(e) => {
           e.stopPropagation();
-          setHoveredMovie(data);
+          document.body.style.cursor = 'pointer';
+          onHoverStart(data);
         }}
         onPointerOut={(e) => {
           e.stopPropagation();
-          setHoveredMovie(null);
+          document.body.style.cursor = 'auto';
+          onHoverEnd();
         }}
       >
-        <boxGeometry args={[3.5, 5, 0.6]} />
-        <meshBasicMaterial transparent opacity={0} />
+        <boxGeometry args={[4.2, 5.6, 1.5]} />
+        <meshBasicMaterial transparent opacity={0} depthWrite={false} />
       </mesh>
+
       {isHovered && data.movie && (
-        <Html distanceFactor={15} position={[0, 0, 0.1]} transform center zIndexRange={[100, 0]}>
-          <div 
-            className="bg-dark text-white p-2 rounded shadow-lg border border-info cursor-pointer hover-scale" 
-            style={{ width: '160px', pointerEvents: 'auto' }}
+        <Html position={[0, 4.2, 0]} center zIndexRange={[1000, 500]}>
+          <div
+            className="bg-dark text-white p-2 rounded-3 shadow-lg border border-info hover-scale"
+            style={{ width: '175px', pointerEvents: 'auto', cursor: 'pointer', boxShadow: '0 8px 28px rgba(0, 204, 255, 0.45)' }}
+            onMouseEnter={() => onCancelHoverClear()}
+            onMouseLeave={() => onHoverEnd()}
+            onPointerDown={(e) => e.stopPropagation()}
             onClick={(e) => {
               e.stopPropagation();
               onMovieClick(data.movie);
             }}
-            title="Clique para ver detalhes do filme"
+            title={t?.viewDetails || "Clique para ver detalhes do filme"}
           >
-            <img src={data.movie.posterUrl} alt={data.movie.title} className="w-100 rounded mb-2" style={{ height: '200px', objectFit: 'cover' }} />
-            <div className="fw-bold text-truncate">{data.movie.titlePt || data.movie.title}</div>
-            <div className="small text-secondary">{data.movie.year} • ⭐ {data.movie.awards?.length || 0} prêmios</div>
+            {data.movie.posterUrl ? (
+              <img src={data.movie.posterUrl} alt={data.movie.title} className="w-100 rounded mb-2" style={{ height: '200px', objectFit: 'cover' }} />
+            ) : (
+              <div className="w-100 rounded mb-2 bg-secondary bg-opacity-25 d-flex align-items-center justify-content-center" style={{ height: '140px' }}>
+                <Film size={32} className="text-info" />
+              </div>
+            )}
+            <div className="fw-bold text-truncate small">{data.movie.titlePt || data.movie.title}</div>
+            <div className="xsmall text-secondary mb-2">{data.movie.year} • ⭐ {data.movie.awards?.length || 0} {t?.awards || 'prêmios'}</div>
+            <div className="btn btn-info btn-sm w-100 py-0 fw-bold xsmall text-dark">
+              {t?.viewDetails || 'Ver Detalhes'}
+            </div>
           </div>
         </Html>
       )}
@@ -78,49 +195,49 @@ const MovieCard = ({ data, hoveredMovie, setHoveredMovie, onMovieClick }: any) =
   );
 };
 
-const CameraController = ({ 
-  target, 
-  mode, 
-  onReached 
-}: { 
-  target: THREE.Vector3 | null, 
-  mode: 'idle' | 'director' | 'overview',
-  onReached: () => void 
+const CameraController = ({
+  target,
+  mode,
+  onReached
+}: {
+  target: THREE.Vector3 | null;
+  mode: 'idle' | 'director' | 'overview';
+  onReached: () => void;
 }) => {
   const { camera, controls } = useThree();
-  
+
   useFrame(() => {
     if (!controls || typeof (controls as any).target === 'undefined') return;
-    
+
     if (mode === 'director' && target) {
       const targetPos = target.clone();
       const cameraPos = target.clone().add(new THREE.Vector3(0, 5, 20));
-      
+
       camera.position.lerp(cameraPos, 0.05);
       (controls as any).target.lerp(targetPos, 0.05);
-      
+
       if (camera.position.distanceTo(cameraPos) < 0.5) {
         onReached();
       }
     } else if (mode === 'overview') {
       const targetPos = new THREE.Vector3(0, 0, 0);
       const cameraPos = new THREE.Vector3(0, 300, 600);
-      
+
       camera.position.lerp(cameraPos, 0.05);
       (controls as any).target.lerp(targetPos, 0.05);
-      
+
       if (camera.position.distanceTo(cameraPos) < 0.5) {
         onReached();
       }
     }
   });
-  
+
   return null;
 };
 
-const ZoomController = ({ zoomInTrigger, zoomOutTrigger }: { zoomInTrigger: number, zoomOutTrigger: number }) => {
+const ZoomController = ({ zoomInTrigger, zoomOutTrigger }: { zoomInTrigger: number; zoomOutTrigger: number }) => {
   const { camera, controls } = useThree();
-  
+
   useEffect(() => {
     if (zoomInTrigger > 0 && controls) {
       const target = (controls as any).target;
@@ -150,7 +267,30 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
   const [zoomInTrigger, setZoomInTrigger] = useState(0);
   const [zoomOutTrigger, setZoomOutTrigger] = useState(0);
   const [viewMode2D, setViewMode2D] = useState(false);
-  const [webglSupported, setWebglSupported] = useState(true);
+  const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const cancelHoverClear = () => {
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+      hoverTimeoutRef.current = null;
+    }
+  };
+
+  const handleHoverStart = (data: any) => {
+    cancelHoverClear();
+    setHoveredMovie(data);
+  };
+
+  const handleHoverEnd = () => {
+    cancelHoverClear();
+    hoverTimeoutRef.current = setTimeout(() => {
+      setHoveredMovie(null);
+    }, 280);
+  };
+
+  useEffect(() => {
+    return () => cancelHoverClear();
+  }, []);
 
   // Check WebGL support on mount
   useEffect(() => {
@@ -158,20 +298,19 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
       const canvas = document.createElement('canvas');
       const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
       if (!gl) {
-        setWebglSupported(false);
         setViewMode2D(true);
       }
     } catch {
-      setWebglSupported(false);
       setViewMode2D(true);
     }
   }, []);
+
+  const starGeometry = useMemo(() => createStarGeometry(7.5, 3.4, 5), []);
 
   const { directorPositions, movieInstances } = useMemo(() => {
     const map = new Map<string, Movie[]>();
     movies.forEach(m => {
       if (!m.director || m.director === 'Unknown') return;
-      // Requirement: Exiba apenas filmes premiados ao redor do diretor
       if (!m.awards || m.awards.length === 0) return;
 
       const dirNames = m.director.split(',').map(d => d.trim()).filter(Boolean);
@@ -180,8 +319,7 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
         map.get(dir)!.push(m);
       });
     });
-    
-    // Requirement: Exiba apenas os diretores que possuem acima de dois filmes premiados (> 2)
+
     const filteredDirectors = Array.from(map.entries())
       .map(([name, dirMovies]) => {
         const awardedMoviesCount = dirMovies.length;
@@ -190,26 +328,22 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
       })
       .filter(d => d.awardedMoviesCount > 2);
 
-    // Sort directors by awarded movies count descending
     const sorted = filteredDirectors.sort((a, b) => b.awardedMoviesCount - a.awardedMoviesCount);
-
-    // Top 40 qualified directors
     const dirs = sorted.slice(0, 40);
     const maxAwarded = dirs.length > 0 ? Math.max(...dirs.map(d => d.awardedMoviesCount)) : 1;
-    
+
     const dirPositions = dirs.map((d, i) => {
       const angle = i * 0.8;
       const radius = 100 + (angle * 35) + Math.random() * 40;
       const y = (Math.random() - 0.5) * 100;
-      
-      // Highlight directors with more awarded movies in distinct glowing colors
-      let color = "#ffaa00"; // default orange
+
+      let color = "#ffaa00";
       let emissive = "#ffaa00";
       if (d.awardedMoviesCount >= Math.max(5, maxAwarded * 0.75)) {
-        color = "#ffd700"; // Gold for elite tier
+        color = "#ffd700";
         emissive = "#ffb700";
       } else if (d.awardedMoviesCount >= Math.max(4, maxAwarded * 0.45)) {
-        color = "#00ffff"; // Cyan for high tier
+        color = "#00ffff";
         emissive = "#0088ff";
       }
 
@@ -229,17 +363,17 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
     dirPositions.forEach(dir => {
       dir.movies.forEach((movie, mIdx) => {
         const yearNormalized = ((movie.year || 1900) - minYear) / (maxYear - minYear || 1);
-        const orbitRadius = 10 + yearNormalized * 30;
+        const orbitRadius = 12 + yearNormalized * 30;
         const angleOffset = (mIdx / dir.movies.length) * Math.PI * 2;
-        
+
         const localPos = new THREE.Vector3(
           Math.cos(angleOffset) * orbitRadius,
           (Math.random() - 0.5) * 4,
           Math.sin(angleOffset) * orbitRadius
         );
-        
+
         const worldPos = dir.position.clone().add(localPos);
-        
+
         instances.push({
           movie,
           directorPos: dir.position,
@@ -286,47 +420,46 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
   return (
     <div className="position-fixed top-0 start-0 w-100 bg-black" style={{ zIndex: 99999, touchAction: 'none', height: '100dvh' }}>
       {/* Close button */}
-      <button 
+      <button
         onClick={onClose}
         className="btn btn-dark position-absolute top-0 end-0 m-2 m-md-4 rounded-circle p-2 shadow border border-secondary"
         style={{ zIndex: 100005 }}
-        aria-label="Fechar"
+        aria-label={t.close || "Fechar"}
       >
         <X size={24} className="text-white" />
       </button>
-      
+
       {/* Top Header & Info */}
       <div className="position-absolute top-0 start-0 m-2 m-md-4 text-white" style={{ zIndex: 100005, pointerEvents: 'none', maxWidth: '85%' }}>
         <h3 className="fw-bold text-info fs-5 fs-md-3 mb-1 d-flex align-items-center gap-2">
           <span>🌌</span> {t.galaxyOfDirectors || "Galáxia de Diretores"}
         </h3>
         <p className="text-secondary small mb-2 d-none d-md-block">
-          Exibindo diretores com mais de 2 filmes premiados e apenas suas obras premiadas.
+          {t.galaxySubtitle || "Exibindo diretores com mais de 2 filmes premiados e apenas suas obras premiadas."}
         </p>
-        
+
         <div className="d-flex align-items-center gap-2 mt-1 mt-md-2 flex-wrap">
-            <div className="d-flex align-items-center gap-1 small bg-black bg-opacity-70 px-2 py-1 rounded border border-secondary border-opacity-50">
-                <div className="rounded-circle" style={{ width: 10, height: 10, background: '#ffd700' }}></div>
-                <span style={{ fontSize: '0.75rem' }}>{t.directorLabel || "Diretor"} ({directorPositions.length})</span>
-            </div>
-            <div className="d-flex align-items-center gap-1 small bg-black bg-opacity-70 px-2 py-1 rounded border border-secondary border-opacity-50">
-                <div className="rounded-circle" style={{ width: 10, height: 10, background: '#00ccff' }}></div>
-                <span style={{ fontSize: '0.75rem' }}>{t.movieLabel || "Filme Premiado"} ({movieInstances.length})</span>
-            </div>
-            
-            {/* View Mode Toggle: 3D vs 2D */}
-            <button 
-              className="btn btn-sm btn-outline-secondary text-white py-0 px-2 rounded-pill"
-              style={{ pointerEvents: 'auto', fontSize: '0.75rem' }}
-              onClick={() => setViewMode2D(!viewMode2D)}
-            >
-              {viewMode2D ? '🪐 Ver em 3D' : '📋 Ver em Lista 2D'}
-            </button>
+          <div className="d-flex align-items-center gap-1 small bg-black bg-opacity-70 px-2 py-1 rounded border border-secondary border-opacity-50">
+            <span style={{ color: '#ffd700', fontSize: '0.85rem', lineHeight: 1 }}>★</span>
+            <span style={{ fontSize: '0.75rem' }}>{t.directorLabel || "Diretor"} ({directorPositions.length})</span>
+          </div>
+          <div className="d-flex align-items-center gap-1 small bg-black bg-opacity-70 px-2 py-1 rounded border border-secondary border-opacity-50">
+            <div className="rounded-1" style={{ width: 10, height: 12, background: '#00ccff' }}></div>
+            <span style={{ fontSize: '0.75rem' }}>{t.movieLabel || "Filme Premiado"} ({movieInstances.length})</span>
+          </div>
+
+          <button
+            className="btn btn-sm btn-outline-secondary text-white py-0 px-2 rounded-pill"
+            style={{ pointerEvents: 'auto', fontSize: '0.75rem' }}
+            onClick={() => setViewMode2D(!viewMode2D)}
+          >
+            {viewMode2D ? '🪐 3D' : '📋 2D'}
+          </button>
         </div>
 
         {targetDirector && !viewMode2D && (
-          <button 
-            className="btn btn-sm btn-info mt-2 shadow-lg px-3" 
+          <button
+            className="btn btn-sm btn-info mt-2 shadow-lg px-3"
             style={{ pointerEvents: 'auto', fontSize: '0.8rem' }}
             onClick={() => {
               setTargetDirector(null);
@@ -341,13 +474,13 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
 
       {/* Mobile Touch Navigation Hint */}
       {!viewMode2D && (
-        <div 
+        <div
           className="position-absolute d-md-none text-center text-white-50 small bg-black bg-opacity-75 px-3 py-1 rounded-pill border border-secondary border-opacity-50"
-          style={{ 
-            top: '85px', 
-            left: '50%', 
-            transform: 'translateX(-50%)', 
-            zIndex: 100004, 
+          style={{
+            top: '85px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 100004,
             pointerEvents: 'none',
             fontSize: '0.7rem',
             whiteSpace: 'nowrap'
@@ -358,31 +491,31 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
       )}
 
       {/* Bottom Director Quick-Picker Bar */}
-      <div 
+      <div
         className="position-absolute bottom-0 start-0 w-100 p-2 p-md-3 d-flex gap-2 overflow-x-auto no-scrollbar"
-        style={{ 
-          zIndex: 100005, 
-          background: 'linear-gradient(to top, rgba(0,0,0,0.95), transparent)', 
+        style={{
+          zIndex: 100005,
+          background: 'linear-gradient(to top, rgba(0,0,0,0.95), transparent)',
           pointerEvents: 'auto',
           WebkitOverflowScrolling: 'touch',
           paddingBottom: '24px'
         }}
       >
         <div className="text-white small fw-bold d-flex align-items-center gap-1 flex-shrink-0 px-2 text-info">
-          <Compass size={14} /> <span className="d-none d-sm-inline">Focar:</span>
+          <Compass size={14} /> <span className="d-none d-sm-inline">{t.directorLabel || 'Diretor'}:</span>
         </div>
         {directorPositions.map((dir, i) => (
           <button
             key={`quick-dir-${i}`}
             className={`btn btn-sm rounded-pill text-nowrap flex-shrink-0 px-3 py-1 border ${
-              selectedDirectorName === dir.name 
-                ? 'btn-info text-dark fw-bold border-info' 
+              selectedDirectorName === dir.name
+                ? 'btn-info text-dark fw-bold border-info'
                 : 'btn-dark text-white border-secondary bg-opacity-75'
             }`}
             style={{ fontSize: '0.75rem' }}
             onClick={() => handleSelectDirector(dir)}
           >
-            ⭐ {dir.name} ({dir.awardedMoviesCount} filmes)
+            ★ {dir.name} ({dir.awardedMoviesCount})
           </button>
         ))}
       </div>
@@ -390,14 +523,14 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
       {/* Zoom Controls (3D only) */}
       {!viewMode2D && (
         <div className="position-absolute end-0 m-3 m-md-4 d-flex flex-column gap-2" style={{ bottom: '70px', zIndex: 100005 }}>
-          <button 
+          <button
             className="btn btn-dark rounded-circle p-2 p-md-3 shadow-lg border border-info"
             onClick={() => setZoomInTrigger(prev => prev + 1)}
             title="Zoom In"
           >
             <ZoomIn size={22} className="text-info" />
           </button>
-          <button 
+          <button
             className="btn btn-dark rounded-circle p-2 p-md-3 shadow-lg border border-secondary"
             onClick={() => setZoomOutTrigger(prev => prev + 1)}
             title="Zoom Out"
@@ -407,9 +540,9 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
         </div>
       )}
 
-      {/* 2D Fallback / Alternative View for Mobile */}
+      {/* 2D Fallback / Alternative View */}
       {viewMode2D ? (
-        <div 
+        <div
           className="w-100 h-100 overflow-y-auto p-3 p-md-5"
           style={{ paddingTop: '100px', paddingBottom: '90px' }}
         >
@@ -420,15 +553,15 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
                   <div className="card bg-dark bg-opacity-75 border-secondary rounded-4 p-3 h-100 shadow">
                     <div className="d-flex align-items-center justify-content-between mb-3 border-bottom border-secondary pb-2">
                       <div className="d-flex align-items-center gap-2">
-                        <div className="rounded-circle" style={{ width: 14, height: 14, background: dir.color }}></div>
+                        <span style={{ color: dir.color, fontSize: '1.2rem', lineHeight: 1 }}>★</span>
                         <h5 className="m-0 text-info fw-bold">{dir.name}</h5>
                       </div>
-                      <span className="badge bg-warning text-dark">⭐ {dir.awardedMoviesCount} filmes premiados</span>
+                      <span className="badge bg-warning text-dark">★ {dir.awardedMoviesCount}</span>
                     </div>
 
                     <div className="d-flex flex-column gap-2">
                       {dir.movies.map(movie => (
-                        <div 
+                        <div
                           key={movie.id}
                           className="d-flex align-items-center justify-content-between p-2 rounded bg-black bg-opacity-40 border border-secondary border-opacity-25 hover-scale cursor-pointer"
                           onClick={() => {
@@ -443,10 +576,18 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
                             )}
                             <div className="text-truncate">
                               <div className="fw-bold small text-white text-truncate">{movie.titlePt || movie.title}</div>
-                              <div className="text-white-50 xsmall">{movie.year} • {movie.awards?.[0] || 'Prêmio'}</div>
+                              <div className="text-white-50 xsmall">{movie.year} • {movie.awards?.[0] || t.awards || 'Prêmio'}</div>
                             </div>
                           </div>
-                          <button className="btn btn-sm btn-outline-info rounded-circle p-1 flex-shrink-0" title="Ver Detalhes">
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-outline-info rounded-circle p-1 flex-shrink-0"
+                            title={t.viewDetails || "Ver Detalhes"}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (onMovieClick) onMovieClick(movie);
+                            }}
+                          >
                             <Play size={14} />
                           </button>
                         </div>
@@ -460,7 +601,7 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
         </div>
       ) : (
         /* 3D Canvas */
-        <Canvas 
+        <Canvas
           camera={{ position: [0, 500, 1000], fov: 60 }}
           gl={{ powerPreference: 'high-performance', antialias: false, alpha: false }}
           style={{ width: '100%', height: '100%', display: 'block' }}
@@ -478,85 +619,53 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
             <ambientLight intensity={0.6} />
             <pointLight position={[500, 500, 500]} intensity={1.5} color="#0088ff" />
             <pointLight position={[-500, -500, -500]} intensity={1} color="#ffaa00" />
-            
+
             {/* Stars background */}
-            <Instances limit={800} range={800}>
-              <boxGeometry args={[1.5, 1.5, 1.5]} />
-              <meshBasicMaterial color="#4477ff" transparent opacity={0.4} />
+            <Instances limit={800} range={800} frustumCulled={false}>
+              <octahedronGeometry args={[1.2, 0]} />
+              <meshBasicMaterial color="#4477ff" transparent opacity={0.45} />
               {Array.from({ length: 800 }).map((_, i) => (
-                <Instance 
-                  key={`star-${i}`} 
+                <Instance
+                  key={`star-${i}`}
                   position={[
-                    (Math.random() - 0.5) * 4000, 
-                    (Math.random() - 0.5) * 4000, 
+                    (Math.random() - 0.5) * 4000,
+                    (Math.random() - 0.5) * 4000,
                     (Math.random() - 0.5) * 4000
-                  ]} 
+                  ]}
                   scale={Math.random() * 0.6 + 0.2}
                 />
               ))}
             </Instances>
 
-            {/* Directors */}
+            {/* Directors as 3D Stars */}
             {directorPositions.map((dir, i) => (
-              <group key={`dir-${i}`} position={dir.position}>
-                <mesh 
-                  onClick={(e) => { 
-                    e.stopPropagation(); 
-                    handleSelectDirector(dir);
-                  }}
-                  onPointerOver={() => { document.body.style.cursor = 'pointer'; }}
-                  onPointerOut={() => { document.body.style.cursor = 'auto'; }}
-                >
-                  <sphereGeometry args={[6, 20, 20]} />
-                  <meshStandardMaterial 
-                    color={dir.color} 
-                    emissive={dir.emissive} 
-                    emissiveIntensity={3} 
-                    metalness={0.8}
-                    roughness={0.2}
-                  />
-                </mesh>
-                <Text 
-                  position={[0, 10, 0]} 
-                  fontSize={4.5} 
-                  color="white" 
-                  anchorX="center" 
-                  anchorY="middle"
-                  outlineWidth={0.4}
-                  outlineColor="#000000"
-                >
-                  {dir.name} ({dir.awardedMoviesCount})
-                </Text>
-              </group>
+              <DirectorStar
+                key={`dir-${i}`}
+                dir={dir}
+                starGeometry={starGeometry}
+                onSelect={handleSelectDirector}
+              />
             ))}
 
-            {/* Movies */}
-            <Instances limit={movieInstances.length} range={movieInstances.length}>
-              <boxGeometry args={[1.5, 2.2, 0.1]} />
-              <meshStandardMaterial 
-                roughness={0.5} 
-                metalness={0.5} 
-                color="#00ccff"
-                emissive="#00ccff"
-                emissiveIntensity={0.5}
+            {/* Awarded Movies */}
+            {movieInstances.map((data, i) => (
+              <MovieCard
+                key={`movie-${data.movie.id}-${i}`}
+                data={data}
+                hoveredMovie={hoveredMovie}
+                onHoverStart={handleHoverStart}
+                onHoverEnd={handleHoverEnd}
+                onCancelHoverClear={cancelHoverClear}
+                onMovieClick={onMovieClick}
                 bumpMap={bumpMap}
-                bumpScale={0.05}
+                t={t}
               />
-              {movieInstances.map((data, i) => (
-                <MovieCard 
-                  key={`movie-${i}`} 
-                  data={data} 
-                  hoveredMovie={hoveredMovie} 
-                  setHoveredMovie={setHoveredMovie}
-                  onMovieClick={onMovieClick}
-                />
-              ))}
-            </Instances>
+            ))}
 
-            <OrbitControls 
-              makeDefault 
-              enableDamping 
-              dampingFactor={0.08} 
+            <OrbitControls
+              makeDefault
+              enableDamping
+              dampingFactor={0.08}
               maxDistance={3500}
               minDistance={10}
               touches={{
@@ -564,41 +673,71 @@ export const GalaxyView: React.FC<GalaxyViewProps> = ({ movies, onMovieClick, on
                 TWO: THREE.TOUCH.DOLLY_PAN
               }}
             />
-            <CameraController 
-              target={targetDirector} 
-              mode={cameraMode} 
-              onReached={() => setCameraMode('idle')} 
+            <CameraController
+              target={targetDirector}
+              mode={cameraMode}
+              onReached={() => setCameraMode('idle')}
             />
-            <ZoomController 
-              zoomInTrigger={zoomInTrigger} 
-              zoomOutTrigger={zoomOutTrigger} 
+            <ZoomController
+              zoomInTrigger={zoomInTrigger}
+              zoomOutTrigger={zoomOutTrigger}
             />
           </Suspense>
         </Canvas>
       )}
 
-      {hoveredMovie && (
-        <div 
-          className="position-absolute p-3 bg-dark border border-info rounded shadow-lg text-white"
-          style={{ 
-            top: '50%', 
-            left: '50%', 
-            transform: 'translate(-50%, -50%)',
-            pointerEvents: 'none',
-            zIndex: 1070,
-            maxWidth: '300px'
+      {/* Interactive HUD Card for hovered movie */}
+      {hoveredMovie && !viewMode2D && (
+        <div
+          className="position-absolute p-3 bg-dark border border-info rounded-4 shadow-lg text-white cursor-pointer"
+          style={{
+            top: '80px',
+            right: '20px',
+            pointerEvents: 'auto',
+            zIndex: 100006,
+            width: '260px',
+            boxShadow: '0 8px 32px rgba(0, 200, 255, 0.35)'
+          }}
+          onMouseEnter={cancelHoverClear}
+          onMouseLeave={handleHoverEnd}
+          onClick={(e) => {
+            e.stopPropagation();
+            onMovieClick(hoveredMovie.movie);
           }}
         >
-          <div className="fw-bold text-info h5">{hoveredMovie.movie.title}</div>
-          <div className="small opacity-75">{hoveredMovie.movie.year}</div>
-          {hoveredMovie.movie.awards && hoveredMovie.movie.awards.length > 0 && (
-              <div className="mt-2 xsmall text-warning d-flex align-items-start gap-2">
-                  <Award size={14} className="mt-1 flex-shrink-0" />
-                  <span>{hoveredMovie.movie.awards[0]}</span>
-              </div>
-          )}
+          <div className="d-flex gap-2 align-items-start">
+            {hoveredMovie.movie.posterUrl && (
+              <img
+                src={hoveredMovie.movie.posterUrl}
+                alt={hoveredMovie.movie.title}
+                className="rounded flex-shrink-0"
+                style={{ width: '54px', height: '80px', objectFit: 'cover' }}
+              />
+            )}
+            <div className="overflow-hidden">
+              <div className="fw-bold text-info small text-truncate">{hoveredMovie.movie.titlePt || hoveredMovie.movie.title}</div>
+              <div className="xsmall text-white-50">{hoveredMovie.movie.year}</div>
+              {hoveredMovie.movie.awards && hoveredMovie.movie.awards.length > 0 && (
+                <div className="mt-1 xsmall text-warning d-flex align-items-start gap-1">
+                  <Award size={12} className="mt-1 flex-shrink-0" />
+                  <span className="text-truncate">{hoveredMovie.movie.awards[0]}</span>
+                </div>
+              )}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn btn-info btn-sm w-100 mt-2 fw-bold text-dark py-1"
+            onClick={(e) => {
+              e.stopPropagation();
+              onMovieClick(hoveredMovie.movie);
+            }}
+          >
+            {t.viewDetails || 'Ver Detalhes'}
+          </button>
         </div>
       )}
     </div>
   );
 };
+

@@ -20,6 +20,7 @@ import { createClient } from "@supabase/supabase-js";
 import WBEdit from 'wikibase-edit';
 import { Server as SocketIOServer } from "socket.io";
 import { setupGameSockets } from "./server/gameSockets.ts";
+import { createGeminiRouter } from "./server/geminiRoutes.ts";
 
 import { GoogleAuth } from "google-auth-library";
 import { google } from "googleapis";
@@ -55,7 +56,9 @@ async function startServer() {
   const PORT = 3000;
 
   app.use(cors());
-  app.use(express.json());
+  app.use(express.json({ limit: "10mb" }));
+
+  app.use("/api/gemini", createGeminiRouter());
 
   // API route to toggle like
   app.post("/api/toggle-like", async (req, res) => {

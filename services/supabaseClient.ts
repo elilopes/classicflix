@@ -1,8 +1,50 @@
 
 import { movies as localMovies } from '../movies.ts';
 import { Movie, UserMovieInteraction } from '../types.ts';
-import { getSupabase, getCurrentUser as getSupabaseUser } from './bd.ts';
+import { getSupabase, getCurrentUser as getSupabaseUser, isValidUuid } from './bd.ts';
 import { getGoogleDrivePosterUrl } from './drivePosterMap.ts';
+import { auth, db, collection, doc, setDoc, getDocs, getDocFromServer, query, where, serverTimestamp, Timestamp } from '../firebase.ts';
+
+enum FirestoreOperationType {
+    CREATE = 'create',
+    UPDATE = 'update',
+    DELETE = 'delete',
+    LIST = 'list',
+    GET = 'get',
+    WRITE = 'write',
+}
+
+function handleFirestoreError(error: unknown, operationType: FirestoreOperationType, path: string | null) {
+    const errInfo = {
+        error: error instanceof Error ? error.message : String(error),
+        authInfo: {
+            userId: auth.currentUser?.uid,
+            email: auth.currentUser?.email,
+            emailVerified: auth.currentUser?.emailVerified,
+            isAnonymous: auth.currentUser?.isAnonymous,
+            tenantId: auth.currentUser?.tenantId,
+            providerInfo: auth.currentUser?.providerData?.map(provider => ({
+                providerId: provider.providerId,
+                email: provider.email,
+            })) || []
+        },
+        operationType,
+        path
+    };
+    console.error('Firestore Error: ', JSON.stringify(errInfo));
+    throw new Error(JSON.stringify(errInfo));
+}
+
+// Validate connection to Firestore on module initialization
+(async function testFirestoreConnection() {
+    try {
+        await getDocFromServer(doc(db, 'test', 'connection'));
+    } catch (error) {
+        if (error instanceof Error && error.message.includes('the client is offline')) {
+            console.error("Please check your Firebase configuration.");
+        }
+    }
+})();
 
 // Re-export auth functions
 export { signInUser, signUpUser, signOutUser, subscribeToAuthChanges, getCurrentUser, signInWithGoogle, signInWithWikipedia } from './bd.ts';
@@ -143,130 +185,240 @@ export const fetchSupabaseMovies = async (): Promise<Movie[]> => {
     }
 };
 
-// Fix: Implement addSupabaseMovie to persist new movies to the database
+const generateMovieRowId = (): string => {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID().replace(/-/g, '').slice(0, 8);
+    }
+    return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`.slice(0, 8);
+};
+
+const toCsvText = (val: unknown): string | null => {
+    if (Array.isArray(val)) {
+        const joined = val.map((v) => String(v || '').trim()).filter(Boolean).join(',');
+        return joined || null;
+    }
+    if (typeof val === 'string') {
+        const trimmed = val.trim();
+        return trimmed || null;
+    }
+    return null;
+};
+
+const formatAwardsForDb = (awards: unknown): string | null => {
+    if (Array.isArray(awards)) {
+        return awards.length > 0 ? JSON.stringify(awards) : null;
+    }
+    if (typeof awards === 'string') {
+        const trimmed = awards.trim();
+        return trimmed || null;
+    }
+    return null;
+};
+
+// Fix: Implement addSupabaseMovie to persist new movies directly to movies, description, and technicaldetails
 export const addSupabaseMovie = async (movie: Partial<Movie>) => {
     const supabase = await getSupabase();
     if (!supabase) return;
-    
-    // Generate id for movies if wikidataId is missing
+
     const isIndie = movie.genres?.includes('Independente') || movie.isIndependent;
     const prefix = isIndie ? 'indie' : 'manual';
     const finalWikidataId = movie.wikidataId || `${prefix}${Math.floor(Math.random() * 100000000)}`;
-    
+
     if (!finalWikidataId) {
         throw new Error("Cannot add movie: missing wikidataId");
     }
 
-    // We insert into the legacy_movies_sink view to trigger the split logic
-    // which populates movies, description, and technicaldetails tables.
-    const { error } = await supabase.from('legacy_movies_sink').insert([{
+    // Preserve existing id if wikidataid already exists; otherwise guarantee a non-null id
+    const { data: existingMovie } = await supabase
+        .from('movies')
+        .select('id')
+        .eq('wikidataid', finalWikidataId)
+        .maybeSingle();
+
+    const finalId = existingMovie?.id || movie.id || generateMovieRowId();
+    const finalTitle = movie.title || movie.originalTitle || finalWikidataId;
+
+    const { error: movieError } = await supabase.from('movies').upsert([{
+        id: finalId,
         wikidataid: finalWikidataId,
-        title: movie.title,
-        titlept: movie.titlePt,
-        originaltitle: movie.originalTitle,
-        descriptionen: movie.description,
-        descriptionpt: movie.descriptionPt,
-        genres: Array.isArray(movie.genres) ? movie.genres.join(', ') : movie.genres,
-        year: movie.year,
-        language: movie.language,
-        hassubtitles: movie.hasSubtitles,
-        posterurl: movie.posterUrl,
-        videourl: movie.videoUrl,
-        trailerurl: movie.trailerUrl,
-        subtitleurl: movie.subtitleUrl,
-        duration: movie.duration,
-        director: movie.director,
-        type: movie.type,
-        rating: movie.rating,
-        castmembers: Array.isArray(movie.cast) ? movie.cast : movie.cast,
-        awards: Array.isArray(movie.awards) ? movie.awards : movie.awards,
-        cinematographers: Array.isArray(movie.cinematographers) ? movie.cinematographers : movie.cinematographers,
-        composers: Array.isArray(movie.composers) ? movie.composers : movie.composers,
-        themes: Array.isArray(movie.themes) ? movie.themes : movie.themes,
-        popularity: movie.popularity || 0
-    }]);
-    
-    if (error) {
-        console.error("Supabase Insert Error (via view):", error);
-        // Fallback to direct movies table insert if view insert fails
-        const { error: fallbackError } = await supabase.from('movies').upsert([{
-            wikidataid: finalWikidataId,
-            title: movie.title,
-            titlept: movie.titlePt,
-            originaltitle: movie.originalTitle,
-            year: movie.year,
-            language: movie.language,
-            hassubtitles: movie.hasSubtitles,
-            posterurl: movie.posterUrl,
-            videourl: movie.videoUrl,
-            trailerurl: movie.trailerUrl,
-            subtitleurl: movie.subtitleUrl,
-            awards: Array.isArray(movie.awards) ? movie.awards : movie.awards,
-            popularity: movie.popularity || 0
-        }], { onConflict: 'wikidataid' });
-        
-        if (fallbackError) {
-            console.error("Supabase Fallback Error:", fallbackError);
-            throw fallbackError;
+        title: finalTitle,
+        titlept: movie.titlePt || null,
+        originaltitle: movie.originalTitle || null,
+        year: movie.year ?? null,
+        language: movie.language || null,
+        hassubtitles: Boolean(movie.hasSubtitles),
+        posterurl: movie.posterUrl || null,
+        videourl: movie.videoUrl || null,
+        trailerurl: movie.trailerUrl || null,
+        subtitleurl: movie.subtitleUrl || null,
+        description: movie.description || null,
+        type: movie.type || 'film',
+        awards: formatAwardsForDb(movie.awards),
+        popularity: movie.popularity ?? 0,
+    }], { onConflict: 'wikidataid' });
+
+    if (movieError) {
+        console.error("Supabase Insert Error (movies):", movieError);
+        throw movieError;
+    }
+
+    // Persist auxiliary description record
+    try {
+        const { data: existingDesc } = await supabase
+            .from('description')
+            .select('id')
+            .eq('wikidataid', finalWikidataId)
+            .maybeSingle();
+
+        const descPayload = {
+            title: finalTitle,
+            descriptionen: movie.description || null,
+            descriptionpt: movie.descriptionPt || null,
+            descriptionhi: movie.descriptionHi || null,
+            descriptionru: movie.descriptionRu || null,
+            descriptionit: movie.descriptionIt || null,
+        };
+
+        if (existingDesc?.id) {
+            await supabase.from('description').update(descPayload).eq('wikidataid', finalWikidataId);
+        } else {
+            await supabase.from('description').insert([{
+                id: finalId,
+                wikidataid: finalWikidataId,
+                ...descPayload,
+            }]);
         }
+    } catch (descErr) {
+        console.warn("Aviso ao salvar tabela description:", descErr);
+    }
+
+    // Persist auxiliary technicaldetails record
+    try {
+        const { data: existingTech } = await supabase
+            .from('technicaldetails')
+            .select('id')
+            .eq('wikidataid', finalWikidataId)
+            .maybeSingle();
+
+        const techPayload = {
+            title: finalTitle,
+            duration: movie.duration || null,
+            genres: toCsvText(movie.genres),
+            director: movie.director || null,
+            sourcelabel: movie.sourceLabel || movie.license || null,
+            castmembers: toCsvText(movie.cast),
+            cinematographers: toCsvText(movie.cinematographers),
+            composers: toCsvText(movie.composers),
+            themes: toCsvText(movie.themes),
+            rating: movie.rating || null,
+        };
+
+        if (existingTech?.id) {
+            await supabase.from('technicaldetails').update(techPayload).eq('wikidataid', finalWikidataId);
+        } else {
+            await supabase.from('technicaldetails').insert([{
+                id: finalId,
+                wikidataid: finalWikidataId,
+                ...techPayload,
+            }]);
+        }
+    } catch (techErr) {
+        console.warn("Aviso ao salvar tabela technicaldetails:", techErr);
     }
 };
 
-// Fix: Implement updateSupabaseMovie to update existing movie records
+// Fix: Implement updateSupabaseMovie to update movies, description, and technicaldetails directly
 export const updateSupabaseMovie = async (wikidataId: string, updates: any) => {
     const supabase = await getSupabase();
     if (!supabase) return;
-    
-    // Use legacy_movies_sink view to handle split table updates via trigger
-    // We use wikidataid exclusively as the primary key
-    const { error } = await supabase.from('legacy_movies_sink').update({
+
+    const { data: existingMovie } = await supabase
+        .from('movies')
+        .select('id')
+        .eq('wikidataid', wikidataId)
+        .maybeSingle();
+
+    const { error: movieError } = await supabase.from('movies').update({
         title: updates.title,
-        titlept: updates.titlePt,
-        originaltitle: updates.originalTitle,
-        descriptionen: updates.description,
-        descriptionpt: updates.descriptionPt,
-        genres: Array.isArray(updates.genres) ? updates.genres.join(', ') : updates.genres,
-        year: updates.year,
-        language: updates.language,
-        hassubtitles: updates.hasSubtitles,
-        posterurl: updates.posterUrl,
-        videourl: updates.videoUrl,
-        trailerurl: updates.trailerUrl,
-        subtitleurl: updates.subtitleUrl,
-        duration: updates.duration,
-        director: updates.director,
-        type: updates.type,
-        rating: updates.rating,
-        castmembers: Array.isArray(updates.cast) ? updates.cast : updates.cast,
-        awards: Array.isArray(updates.awards) ? updates.awards : updates.awards,
-        cinematographers: Array.isArray(updates.cinematographers) ? updates.cinematographers : updates.cinematographers,
-        composers: Array.isArray(updates.composers) ? updates.composers : updates.composers,
-        themes: Array.isArray(updates.themes) ? updates.themes : updates.themes,
-        popularity: updates.popularity
+        titlept: updates.titlePt ?? null,
+        originaltitle: updates.originalTitle ?? null,
+        year: updates.year ?? null,
+        language: updates.language ?? null,
+        hassubtitles: updates.hasSubtitles ?? false,
+        posterurl: updates.posterUrl ?? null,
+        videourl: updates.videoUrl ?? null,
+        trailerurl: updates.trailerUrl ?? null,
+        subtitleurl: updates.subtitleUrl ?? null,
+        description: updates.description ?? null,
+        type: updates.type ?? undefined,
+        awards: formatAwardsForDb(updates.awards),
+        popularity: updates.popularity ?? 0,
     }).eq('wikidataid', wikidataId);
-    
-    if (error) {
-        console.error("Supabase Update Error (via view):", error);
-        // Fallback to direct movies table update using wikidataid
-        const { error: fallbackError } = await supabase.from('movies').update({
+
+    if (movieError) {
+        console.error("Supabase Update Error (movies):", movieError);
+        throw movieError;
+    }
+
+    const rowId = existingMovie?.id || updates.id || generateMovieRowId();
+
+    try {
+        const { data: existingDesc } = await supabase
+            .from('description')
+            .select('id')
+            .eq('wikidataid', wikidataId)
+            .maybeSingle();
+
+        const descPayload = {
             title: updates.title,
-            titlept: updates.titlePt,
-            originaltitle: updates.originalTitle,
-            year: updates.year,
-            language: updates.language,
-            hassubtitles: updates.hasSubtitles,
-            posterurl: updates.posterUrl,
-            videourl: updates.videoUrl,
-            trailerurl: updates.trailerUrl,
-            subtitleurl: updates.subtitleUrl,
-            awards: Array.isArray(updates.awards) ? updates.awards : updates.awards,
-            popularity: updates.popularity
-        }).eq('wikidataid', wikidataId);
-        
-        if (fallbackError) {
-            console.error("Supabase Fallback Update Error:", fallbackError);
-            throw fallbackError;
+            descriptionen: updates.description ?? null,
+            descriptionpt: updates.descriptionPt ?? null,
+        };
+
+        if (existingDesc?.id) {
+            await supabase.from('description').update(descPayload).eq('wikidataid', wikidataId);
+        } else {
+            await supabase.from('description').insert([{
+                id: rowId,
+                wikidataid: wikidataId,
+                ...descPayload,
+            }]);
         }
+    } catch (descErr) {
+        console.warn("Aviso ao atualizar tabela description:", descErr);
+    }
+
+    try {
+        const { data: existingTech } = await supabase
+            .from('technicaldetails')
+            .select('id')
+            .eq('wikidataid', wikidataId)
+            .maybeSingle();
+
+        const techPayload = {
+            title: updates.title,
+            duration: updates.duration ?? null,
+            genres: toCsvText(updates.genres),
+            director: updates.director ?? null,
+            sourcelabel: updates.sourceLabel || updates.license || null,
+            castmembers: toCsvText(updates.cast),
+            cinematographers: toCsvText(updates.cinematographers),
+            composers: toCsvText(updates.composers),
+            themes: toCsvText(updates.themes),
+            rating: updates.rating ?? null,
+        };
+
+        if (existingTech?.id) {
+            await supabase.from('technicaldetails').update(techPayload).eq('wikidataid', wikidataId);
+        } else {
+            await supabase.from('technicaldetails').insert([{
+                id: rowId,
+                wikidataid: wikidataId,
+                ...techPayload,
+            }]);
+        }
+    } catch (techErr) {
+        console.warn("Aviso ao atualizar tabela technicaldetails:", techErr);
     }
 };
 
@@ -286,29 +438,217 @@ export const getExistingWikidataIds = async (): Promise<string[]> => {
     return data.map(m => m.wikidataid).filter(Boolean);
 };
 
-export const getUserInteractions = async (): Promise<UserMovieInteraction[]> => {
-    const supabase = await getSupabase();
-    if (!supabase) return [];
-    const user = await getSupabaseUser();
-    if (!user) return [];
+const getLocalProgress = (userId: string, wikidataId: string): number => {
+    try {
+        const saved = localStorage.getItem(`classicflix_progress_${userId}_${wikidataId}`);
+        return saved ? parseInt(saved, 10) || 0 : 0;
+    } catch {
+        return 0;
+    }
+};
 
-    const { data, error } = await supabase.from('userlists').select('*').eq('userid', user.id);
-    if (error) return [];
-    return data || [];
+const getLocalUserLists = (userId: string): UserMovieInteraction[] => {
+    try {
+        const raw = localStorage.getItem(`classicflix_userlists_${userId}`);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+};
+
+const saveLocalUserLists = (userId: string, lists: UserMovieInteraction[]) => {
+    try {
+        localStorage.setItem(`classicflix_userlists_${userId}`, JSON.stringify(lists));
+    } catch {}
+};
+
+const resolveSupabaseUuid = async (user: any): Promise<string | null> => {
+    const candidate = user?.id || user?.userid;
+    if (isValidUuid(candidate)) return candidate;
+
+    const supabase = await getSupabase();
+    if (supabase) {
+        try {
+            const { data: { session } } = await supabase.auth.getSession();
+            if (session?.user?.id && isValidUuid(session.user.id)) {
+                return session.user.id;
+            }
+        } catch {}
+    }
+    return null;
+};
+
+export const getUserInteractions = async (): Promise<UserMovieInteraction[]> => {
+    const user = await getSupabaseUser();
+    const rawUserId = user?.id || user?.userid;
+    if (!rawUserId) return [];
+
+    const supabaseUuid = await resolveSupabaseUuid(user);
+    if (supabaseUuid) {
+        const supabase = await getSupabase();
+        if (supabase) {
+            const { data, error } = await supabase
+                .from('userlists')
+                .select('*')
+                .eq('userid', supabaseUuid)
+                .order('lastupdated', { ascending: false });
+
+            if (error) {
+                console.error("Erro ao buscar userlists:", error.message);
+                return [];
+            }
+
+            return (data || []).map((row: any) => {
+                const watchLaterVal = Boolean(row.watchlater ?? row.iswatchlist);
+                return {
+                    wikidataid: row.wikidataid,
+                    isfavorite: Boolean(row.isfavorite),
+                    iswatched: Boolean(row.iswatched),
+                    watchlater: watchLaterVal,
+                    iswatchlist: watchLaterVal,
+                    progress_seconds: row.progress_seconds ?? getLocalProgress(supabaseUuid, row.wikidataid),
+                    lastupdated: row.lastupdated,
+                };
+            });
+        }
+    }
+
+    // For Firebase Auth users (e.g. Google OAuth), read from Firestore
+    if (auth.currentUser?.uid) {
+        const fbUid = auth.currentUser.uid;
+        const path = `users/${fbUid}/userlists`;
+        try {
+            const snap = await getDocs(
+                query(collection(db, 'users', fbUid, 'userlists'), where('userid', '==', fbUid))
+            );
+            const items: UserMovieInteraction[] = [];
+            snap.forEach((docSnap) => {
+                const row = docSnap.data();
+                const watchLaterVal = Boolean(row.watchlater ?? row.iswatchlist);
+                const lastUpdatedVal = row.lastupdated instanceof Timestamp
+                    ? row.lastupdated.toDate().toISOString()
+                    : (typeof row.lastupdated === 'string' ? row.lastupdated : undefined);
+                items.push({
+                    wikidataid: row.wikidataid || docSnap.id,
+                    isfavorite: Boolean(row.isfavorite),
+                    iswatched: Boolean(row.iswatched),
+                    watchlater: watchLaterVal,
+                    iswatchlist: watchLaterVal,
+                    progress_seconds: getLocalProgress(fbUid, row.wikidataid || docSnap.id),
+                    lastupdated: lastUpdatedVal,
+                });
+            });
+            return items.sort((a, b) => (b.lastupdated || '').localeCompare(a.lastupdated || ''));
+        } catch (error) {
+            handleFirestoreError(error, FirestoreOperationType.LIST, path);
+        }
+    }
+
+    // Fallback for non-UUID / non-Firebase OAuth sessions (e.g., Wikipedia OAuth)
+    return getLocalUserLists(String(rawUserId));
 };
 
 export const updateInteraction = async (wikidataId: string, updates: Partial<UserMovieInteraction>) => {
-    const supabase = await getSupabase();
-    if (!supabase) return;
     const user = await getSupabaseUser();
-    if (!user) return;
+    const rawUserId = user?.id || user?.userid;
+    if (!rawUserId || !wikidataId) return;
 
-    await supabase.from('userlists').upsert({ 
-        userid: user.id, 
-        wikidataid: wikidataId, 
-        ...updates,
-        lastupdated: new Date().toISOString()
-    });
+    if (updates.progress_seconds !== undefined) {
+        try {
+            localStorage.setItem(`classicflix_progress_${rawUserId}_${wikidataId}`, String(Math.floor(updates.progress_seconds)));
+        } catch {}
+    }
+
+    const hasListUpdates =
+        updates.isfavorite !== undefined ||
+        updates.iswatched !== undefined ||
+        updates.watchlater !== undefined ||
+        updates.iswatchlist !== undefined;
+
+    if (!hasListUpdates) return;
+
+    const supabaseUuid = await resolveSupabaseUuid(user);
+    if (supabaseUuid) {
+        const supabase = await getSupabase();
+        if (!supabase) return;
+
+        const payload: Record<string, any> = {
+            userid: supabaseUuid,
+            wikidataid: wikidataId,
+            lastupdated: new Date().toISOString()
+        };
+
+        if (updates.isfavorite !== undefined) payload.isfavorite = Boolean(updates.isfavorite);
+        if (updates.iswatched !== undefined) payload.iswatched = Boolean(updates.iswatched);
+        if (updates.watchlater !== undefined || updates.iswatchlist !== undefined) {
+            payload.watchlater = Boolean(updates.watchlater ?? updates.iswatchlist);
+        }
+
+        const { error } = await supabase
+            .from('userlists')
+            .upsert(payload, { onConflict: 'userid,wikidataid' });
+
+        if (error) {
+            console.error("Erro ao atualizar userlists:", error.message);
+            throw error;
+        }
+        return;
+    }
+
+    // For Firebase Auth users (e.g. Google OAuth), write to Firestore
+    if (auth.currentUser?.uid) {
+        const fbUid = auth.currentUser.uid;
+        const path = `users/${fbUid}/userlists/${wikidataId}`;
+        try {
+            const existingLists = await getUserInteractions();
+            const existing = existingLists.find(i => i.wikidataid === wikidataId);
+            const nextFavorite = updates.isfavorite !== undefined ? Boolean(updates.isfavorite) : Boolean(existing?.isfavorite);
+            const nextWatched = updates.iswatched !== undefined ? Boolean(updates.iswatched) : Boolean(existing?.iswatched);
+            const nextWatchLater = (updates.watchlater !== undefined || updates.iswatchlist !== undefined)
+                ? Boolean(updates.watchlater ?? updates.iswatchlist)
+                : Boolean(existing?.watchlater ?? existing?.iswatchlist);
+
+            await setDoc(doc(db, 'users', fbUid, 'userlists', wikidataId), {
+                userid: fbUid,
+                wikidataid: wikidataId,
+                isfavorite: nextFavorite,
+                iswatched: nextWatched,
+                watchlater: nextWatchLater,
+                lastupdated: serverTimestamp(),
+            });
+            return;
+        } catch (error) {
+            handleFirestoreError(error, FirestoreOperationType.WRITE, path);
+        }
+    }
+
+    // LocalStorage fallback (e.g., Wikipedia OAuth)
+    const current = getLocalUserLists(String(rawUserId));
+    const idx = current.findIndex(i => i.wikidataid === wikidataId);
+    const prev = idx >= 0 ? current[idx] : {
+        wikidataid: wikidataId,
+        isfavorite: false,
+        iswatched: false,
+        watchlater: false,
+        iswatchlist: false,
+        progress_seconds: 0
+    };
+    const nextWatchLater = (updates.watchlater !== undefined || updates.iswatchlist !== undefined)
+        ? Boolean(updates.watchlater ?? updates.iswatchlist)
+        : Boolean(prev.watchlater ?? prev.iswatchlist);
+    const updatedItem: UserMovieInteraction = {
+        ...prev,
+        isfavorite: updates.isfavorite !== undefined ? Boolean(updates.isfavorite) : prev.isfavorite,
+        iswatched: updates.iswatched !== undefined ? Boolean(updates.iswatched) : prev.iswatched,
+        watchlater: nextWatchLater,
+        iswatchlist: nextWatchLater,
+        lastupdated: new Date().toISOString(),
+    };
+    if (idx >= 0) current[idx] = updatedItem;
+    else current.unshift(updatedItem);
+    saveLocalUserLists(String(rawUserId), current);
 };
 
 export const incrementMoviePopularity = async (id: string) => {
@@ -383,3 +723,33 @@ export const getLeaderboard = async () => {
     }
     return data;
 };
+
+export const upsertIdentifiers = async (wikidataId: string, ids: {
+    archiveId?: string;
+    imdbId?: string;
+    googleKnowId?: string;
+    ofdbId?: string;
+    openMdbId?: string;
+    youtubeId?: string;
+    commons?: string;
+}) => {
+    const supabase = await getSupabase();
+    if (!supabase) return;
+    
+    const { error } = await supabase.from('identifiers').upsert([{
+        wikidataid: wikidataId,
+        archiveid: ids.archiveId || null,
+        imdbid: ids.imdbId || null,
+        googleknowid: ids.googleKnowId || null,
+        ofdbid: ids.ofdbId || null,
+        openmdbid: ids.openMdbId || null,
+        youtube: ids.youtubeId || null,
+        commons: ids.commons || null,
+        updatedat: new Date().toISOString(),
+    }], { onConflict: 'wikidataid' });
+
+    if (error) {
+        console.error("Erro ao salvar identifiers:", error.message);
+    }
+};
+

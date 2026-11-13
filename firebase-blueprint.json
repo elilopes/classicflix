@@ -42,6 +42,20 @@
         "createdAt": { "type": "string", "format": "date-time", "description": "The time the score was recorded" }
       },
       "required": ["userId", "userName", "score", "totalQuestions", "createdAt"]
+    },
+    "UserListEntry": {
+      "title": "UserListEntry",
+      "description": "A user's personal movie list flags (favorite, watched, watch later)",
+      "type": "object",
+      "properties": {
+        "userid": { "type": "string", "description": "The owner Firebase Auth UID", "maxLength": 128 },
+        "wikidataid": { "type": "string", "description": "The movie Wikidata ID or catalog ID", "maxLength": 128 },
+        "isfavorite": { "type": "boolean", "description": "Whether the movie is in favorites" },
+        "iswatched": { "type": "boolean", "description": "Whether the movie has been watched" },
+        "watchlater": { "type": "boolean", "description": "Whether the movie is in the watch later list" },
+        "lastupdated": { "type": "string", "format": "date-time", "description": "Last update server timestamp" }
+      },
+      "required": ["userid", "wikidataid", "isfavorite", "iswatched", "watchlater", "lastupdated"]
     }
   },
   "firestore": {
@@ -56,6 +70,10 @@
     "/quiz_scores": {
       "schema": "QuizScore",
       "description": "Collection of quiz scores for the leaderboard"
+    },
+    "/users/{userId}/userlists/{wikidataId}": {
+      "schema": "UserListEntry",
+      "description": "Private user movie interaction lists (favorites, watched, watch later)"
     }
   }
 }

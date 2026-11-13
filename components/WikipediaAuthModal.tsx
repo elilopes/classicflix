@@ -2,12 +2,13 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, ExternalLink, Loader2, KeyRound, CheckCircle, UserCheck } from 'lucide-react';
 import { verifyWikipediaUser, WikipediaUser, saveWikipediaUser } from '../services/wikipediaAuthService';
+import { AppLanguage } from '../types';
 
 interface WikipediaAuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: (user: WikipediaUser) => void;
-  appLanguage?: 'en' | 'pt' | 'it' | 'hi' | 'ru';
+  appLanguage?: AppLanguage;
   authUrlData?: {
     configured: boolean;
     setupUrl?: string;

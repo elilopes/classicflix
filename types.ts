@@ -97,9 +97,10 @@ export interface UserMovieInteraction {
   wikidataid: string;
   isfavorite: boolean;
   iswatched: boolean;
-  iswatchlist: boolean;
-  progress_seconds: number;
+  watchlater: boolean;
+  iswatchlist?: boolean;
+  progress_seconds?: number;
   lastupdated?: string;
 }
 
-export type AppLanguage = 'en' | 'pt' | 'it' | 'hi' | 'ru';
+export type AppLanguage = 'en' | 'pt' | 'it' | 'hi' | 'ru' | 'zh';

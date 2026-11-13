@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Heart, CheckCircle, MonitorPlay, ImageOff, Play } from 'lucide-react';
+import { Heart, CheckCircle, MonitorPlay, ImageOff, Play, Clock } from 'lucide-react';
 import { Movie, UserMovieInteraction } from '../types';
 import { getTmdbByImdbId } from '../services/tmdbService';
 import { getOmdbMovieDetails } from '../services/omdbService';
@@ -256,6 +256,7 @@ export const MovieCard: React.FC<MovieCardProps> = ({ movie, state, onOpen, view
                     <div className="d-flex justify-content-between align-items-center">
                         <div className="d-flex gap-2 align-items-center">
                             {state.isfavorite && <Heart size={14} className="text-danger" fill="currentColor" />}
+                            {(state.watchlater || state.iswatchlist) && <Clock size={14} className="text-primary" />}
                             {state.iswatched && <CheckCircle size={14} className="text-success" />}
                             {movie.hasSubtitles && <MonitorPlay size={14} className="text-info" />}
                         </div>

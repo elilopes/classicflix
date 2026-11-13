@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Loader2, Award, CheckCircle2, XCircle, RefreshCw, Sparkles, PlayCircle, Save } from 'lucide-react';
-import { GoogleGenAI, Type } from "@google/genai";
 import { Movie } from '../types';
 import { updateUserScore } from '../services/scoreService';
+import { generateMovieQuiz } from '../services/geminiService';
 
 interface Question {
   question: string;
@@ -32,39 +32,12 @@ export const QuizModal: React.FC<QuizModalProps> = ({ isOpen, onClose, movie, cu
   const generateQuiz = async () => {
     setLoading(true);
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || '' });
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: `Gere um quiz de 5 perguntas sobre o filme "${movie.titlePt || movie.title}" (${movie.year}), dirigido por ${movie.director}. 
-        As perguntas devem ser variadas (enredo, curiosidades, produção). 
-        Retorne APENAS um JSON no formato:
-        [
-          {
-            "question": "pergunta",
-            "options": ["opção 0", "opção 1", "opção 2", "opção 3"],
-            "correctAnswer": 0,
-            "explanation": "explicação curta"
-          }
-        ]`,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.ARRAY,
-            items: {
-              type: Type.OBJECT,
-              properties: {
-                question: { type: Type.STRING },
-                options: { type: Type.ARRAY, items: { type: Type.STRING } },
-                correctAnswer: { type: Type.INTEGER },
-                explanation: { type: Type.STRING }
-              },
-              required: ["question", "options", "correctAnswer", "explanation"]
-            }
-          }
-        }
+      const data = await generateMovieQuiz({
+        title: movie.title,
+        titlePt: movie.titlePt,
+        year: movie.year,
+        director: movie.director,
       });
-
-      const data = JSON.parse(response.text);
       setQuestions(data);
       setCurrentStep('quiz');
       setCurrentQuestionIndex(0);
