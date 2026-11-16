@@ -1,10 +1,12 @@
 {
-  "projectId": "gen-lang-client-0725873694",
-  "appId": "1:647288041772:web:7e3751adb59481e01ebc89",
-  "apiKey": "AIzaSyCjkz3UYWBhEhuZkNUk7tT4aOHK-bZ0rT4",
-  "authDomain": "gen-lang-client-0725873694.firebaseapp.com",
+  "projectId": "form-eventos-ascom",
+  "appId": "1:981795669454:web:d33926f1f41cef80ac579f",
+  "apiKey": "AIzaSyBLtswBOdch7tmJ1yySKi-S0HG7j_ZkSP0",
+  "authDomain": "form-eventos-ascom.firebaseapp.com",
   "firestoreDatabaseId": "ai-studio-498edd3e-7852-4f2d-af97-2db07ea9a8e9",
-  "storageBucket": "gen-lang-client-0725873694.firebasestorage.app",
-  "messagingSenderId": "647288041772",
-  "measurementId": ""
+  "storageBucket": "form-eventos-ascom.firebasestorage.app",
+  "messagingSenderId": "981795669454",
+  "measurementId": "",
+  "oAuthClientId": "981795669454-vq0fh4h5g8969sh2lq0uifqmn8ber4r9.apps.googleusercontent.com",
+  "recaptchaSiteKey": ""
 }

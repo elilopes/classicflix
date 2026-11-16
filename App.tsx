@@ -28,7 +28,7 @@ import {
 
 import { 
   Search, Film, User, LogOut, Loader2, Plus, RefreshCw, ChevronDown, Clapperboard, Globe, TrendingUp, Download, FileText, CheckCircle, X,
-  History, Trash2, Orbit, Trophy, Cpu, Heart, Clock
+  History, ShieldAlert, Orbit, Trophy, Cpu, Heart, Clock
 } from 'lucide-react';
 import { GalaxyView } from './components/GalaxyView';
 import { TimelineModal } from './components/TimelineModal';
@@ -43,6 +43,7 @@ import { BestReviewsModal } from './components/BestReviewsModal';
 import { McpConnectedAppsModal } from './components/McpConnectedAppsModal';
 import { WikipediaAuthModal } from './components/WikipediaAuthModal';
 import { getWikipediaAuthUrl, saveWikipediaUser } from './services/wikipediaAuthService';
+import { connectGoogleDrive, getGoogleDriveAccessToken } from './firebase';
 import { UserListsModal, UserListTab } from './components/UserListsModal';
 
 const getCanonicalLanguage = (rawLang: string | undefined): string => {
@@ -145,7 +146,13 @@ export default function App() {
     try {
       const moviesFromDb = await fetchSupabaseMovies();
       setDatabaseMovies(moviesFromDb && moviesFromDb.length > 0 ? moviesFromDb : localMovies);
-      if (user) setInteractions(await getUserInteractions());
+      if (user) {
+        try {
+          setInteractions(await getUserInteractions());
+        } catch (interactionErr) {
+          console.warn("Aviso ao carregar listas do usuário:", interactionErr);
+        }
+      }
     } catch (e) {
       console.error("Refresh Error:", e);
       setDatabaseMovies(localMovies);
@@ -158,8 +165,13 @@ export default function App() {
     refreshData();
     subscribeToAuthChanges((currentUser) => {
         setUser(currentUser);
-        if (currentUser) getUserInteractions().then(setInteractions);
-        else setInteractions([]);
+        if (currentUser) {
+          getUserInteractions()
+            .then(setInteractions)
+            .catch((err) => console.warn("Aviso ao carregar listas do usuário:", err));
+        } else {
+          setInteractions([]);
+        }
     });
 
     const handleOAuthMessage = async (event: MessageEvent) => {
@@ -442,7 +454,7 @@ export default function App() {
 
   return (
     <div className="min-vh-100 bg-black text-white d-flex flex-column">
-      <nav className="navbar navbar-expand-lg navbar-dark bg-surface sticky-top border-bottom border-secondary px-3 shadow" style={{ zIndex: 1100 }}>
+      <nav className="navbar navbar-expand-lg navbar-dark bg-surface sticky-top border-bottom border-secondary px-3 shadow" style={{ zIndex: 1020 }}>
         <div className="container-fluid">
           <a className="navbar-brand fw-bold text-danger d-flex align-items-center gap-2" href="#" onClick={() => setFilters({searchQuery: '', selectedGenre: null, selectedLanguage: null, selectedYear: null, selectedDecade: null, selectedRating: null, selectedColor: null, selectedTheme: null, selectedSource: null, selectedDuration: null, hasSubtitles: null, selectedDirector: null, selectedAward: null, hasPosterOnly: false, hasVideoOnly: false, selectedTop30: null, selectedType: null})}>
             <Film size={26} /> <span>CLASSICFLIX</span>
@@ -534,16 +546,21 @@ export default function App() {
                 title="Model Context Protocol & Google Connected Apps Platform"
               >
                 <Cpu size={16} />
-                <span className="d-none d-lg-inline">MCP / Connected Apps</span>
+                <span className="d-none d-lg-inline">MCP</span>
               </button>
               
               {user?.email === 'liclopes@gmail.com' && (
                 <button 
                   className="btn btn-outline-danger btn-sm d-flex align-items-center gap-1 flex-shrink-0" 
-                  onClick={() => setShowAdminDeleteModal(true)}
-                  title="Painel Admin - Excluir Produções"
+                  onClick={() => {
+                    setShowAdminDeleteModal(true);
+                    if (!getGoogleDriveAccessToken()) {
+                      void connectGoogleDrive().catch(() => {});
+                    }
+                  }}
+                  title="Painel do Administrador"
                 >
-                  <Trash2 size={16} />
+                  <ShieldAlert size={16} />
                   <span className="d-none d-lg-inline">Admin</span>
                 </button>
               )}
@@ -646,7 +663,7 @@ export default function App() {
                       </button>
                     </li>
                     <li><hr className="dropdown-divider border-secondary my-1" /></li>
-                    <li><button className="dropdown-item py-2" onClick={() => { signOutUser(); setIsUserMenuOpen(false); }}><LogOut size={16} className="me-2" /> {t.logout}</button></li>
+                    <li><button className="dropdown-item py-2" onClick={async () => { setIsUserMenuOpen(false); await signOutUser(); setUser(null); setInteractions([]); }}><LogOut size={16} className="me-2" /> {t.logout}</button></li>
                   </ul>
                 )}
               </div>

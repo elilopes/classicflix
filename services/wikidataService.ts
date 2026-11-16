@@ -625,7 +625,68 @@ export const findPublicDomainTvSeries = async (): Promise<WikidataPublicDomainTv
     }
 };
 
-export type PublicDomainProductionCategory = 'all' | 'tv_series' | 'animated_short' | 'documentary_film';
+export type PublicDomainProductionCategory =
+    | 'all'
+    | 'film'
+    | 'short_film'
+    | 'television_film'
+    | 'television_program'
+    | 'television_series_episode'
+    | 'silent_film'
+    | 'silent_short_film'
+    | 'animated_short'
+    | 'animated_film'
+    | 'tv_series'
+    | 'film_series'
+    | 'open_source_film'
+    | 'documentary_film'
+    | 'miniseries';
+
+export const PUBLIC_DOMAIN_INSTANCE_MAP: Record<
+    Exclude<PublicDomainProductionCategory, 'all' | 'documentary_film'>,
+    { qid: string; typeValue: string; label: string }
+> = {
+    film: { qid: 'Q11424', typeValue: 'film', label: 'film' },
+    short_film: { qid: 'Q24862', typeValue: 'short film', label: 'short film' },
+    television_film: { qid: 'Q506240', typeValue: 'television film', label: 'television film' },
+    television_program: { qid: 'Q15416', typeValue: 'television program', label: 'television program' },
+    television_series_episode: { qid: 'Q21191270', typeValue: 'television series episode', label: 'television series episode' },
+    silent_film: { qid: 'Q226730', typeValue: 'silent film', label: 'silent film' },
+    silent_short_film: { qid: 'Q20667187', typeValue: 'silent short film', label: 'silent short film' },
+    animated_short: { qid: 'Q17517379', typeValue: 'animated short film', label: 'animated short film' },
+    animated_film: { qid: 'Q202866', typeValue: 'animated film', label: 'animated film' },
+    tv_series: { qid: 'Q5398426', typeValue: 'television series', label: 'television series' },
+    film_series: { qid: 'Q24856', typeValue: 'film series', label: 'film series' },
+    open_source_film: { qid: 'Q917641', typeValue: 'open-source film', label: 'open-source film' },
+    miniseries: { qid: 'Q1259759', typeValue: 'miniseries', label: 'miniseries' },
+};
+
+const INSTANCE_QID_TO_TYPE_MAP: Record<string, string> = Object.values(PUBLIC_DOMAIN_INSTANCE_MAP).reduce(
+    (acc, item) => {
+        acc[item.qid] = item.typeValue;
+        return acc;
+    },
+    {} as Record<string, string>
+);
+
+const sanitizeWikidataListValue = (raw: string): string =>
+    raw.replace(/[\[\]"()]/g, '').replace(/\s+/g, ' ').trim();
+
+const parseCleanPipeList = (raw?: string): string[] => {
+    if (!raw) return [];
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const part of raw.split('|')) {
+        const clean = sanitizeWikidataListValue(part);
+        if (!clean) continue;
+        const key = clean.toLowerCase();
+        if (!seen.has(key)) {
+            seen.add(key);
+            result.push(clean);
+        }
+    }
+    return result;
+};
 
 export interface WikidataPublicDomainProduction {
     wikidataId: string;
@@ -633,11 +694,17 @@ export interface WikidataPublicDomainProduction {
     hasP1476: boolean;
     instanceQid: string;
     instanceLabel: string;
+    supabaseType: string;
     isDocumentary: boolean;
     language: string;
     year: number;
     description: string;
+    descriptionEn: string;
+    descriptionPt: string;
     director: string;
+    duration: string;
+    genres: string[];
+    themes: string[];
     posterUrl: string;
     videoUrl: string;
     hasVideo: boolean;
@@ -653,49 +720,54 @@ export const buildPublicDomainProductionsSparql = (
     category: PublicDomainProductionCategory = 'all',
     limit: number = 150
 ): string => {
-    const tvBranch = `{
-    ?item wdt:P31 wd:Q5398426 .   # instância de: série de televisão
-    ?item wdt:P6216 wd:Q19652 .  # situação dos direitos autorais: domínio público
-    BIND(wd:Q5398426 AS ?matchedInstance)
-    BIND(false AS ?isDoc)
-  }`;
-
-    const animShortBranch = `{
-    ?item wdt:P31 wd:Q17517379 . # instância de: curta-metragem de animação
-    ?item wdt:P6216 wd:Q19652 .  # situação dos direitos autorais: domínio público
-    BIND(wd:Q17517379 AS ?matchedInstance)
-    BIND(false AS ?isDoc)
-  }`;
-
     const docFilmBranch = `{
-    ?item wdt:P31 wd:Q11424 .    # instância de: filme
-    ?item wdt:P136 wd:Q93204 .   # gênero: filme documental
-    ?item wdt:P6216 wd:Q19652 .  # situação dos direitos autorais: domínio público
+    ?item wdt:P31 wd:Q11424 .    # instância de: film
+    ?item wdt:P136 wd:Q93204 .   # gênero: documentary film
+    ?item wdt:P6216 wd:Q19652 .  # domínio público
     BIND(wd:Q11424 AS ?matchedInstance)
     BIND(true AS ?isDoc)
   }`;
 
     let wherePattern = '';
-    if (category === 'tv_series') {
-        wherePattern = tvBranch;
-    } else if (category === 'animated_short') {
-        wherePattern = animShortBranch;
-    } else if (category === 'documentary_film') {
+    if (category === 'documentary_film') {
         wherePattern = docFilmBranch;
+    } else if (category !== 'all' && PUBLIC_DOMAIN_INSTANCE_MAP[category]) {
+        const targetQid = PUBLIC_DOMAIN_INSTANCE_MAP[category].qid;
+        wherePattern = `{
+    ?item wdt:P31 wd:${targetQid} .
+    ?item wdt:P6216 wd:Q19652 .
+    BIND(wd:${targetQid} AS ?matchedInstance)
+    BIND(false AS ?isDoc)
+  }`;
     } else {
-        wherePattern = `${tvBranch}\n  UNION\n  ${animShortBranch}\n  UNION\n  ${docFilmBranch}`;
+        const allQids = Object.values(PUBLIC_DOMAIN_INSTANCE_MAP)
+            .map((entry) => `wd:${entry.qid}`)
+            .join(' ');
+        wherePattern = `{
+    VALUES ?matchedInstance { ${allQids} }
+    ?item wdt:P31 ?matchedInstance .
+    ?item wdt:P6216 wd:Q19652 .
+    BIND(false AS ?isDoc)
+  }
+  UNION
+  ${docFilmBranch}`;
     }
 
     return `SELECT ?item
   (SAMPLE(?p1476Title) AS ?titleP1476)
   (SAMPLE(?itemLabel) AS ?label)
   (SAMPLE(?itemDescription) AS ?description)
+  (SAMPLE(?descEnRaw) AS ?descriptionEn)
+  (SAMPLE(?descPtRaw) AS ?descriptionPt)
   (SAMPLE(?matchedInstance) AS ?instanceEntity)
   (SAMPLE(?matchedInstanceLabel) AS ?instanceName)
   (MAX(?isDoc) AS ?isDocumentaryFlag)
   (SAMPLE(?langLabel) AS ?origLang)
   (SAMPLE(?pubDate) AS ?date)
-  (SAMPLE(?directorLabel) AS ?director)
+  (GROUP_CONCAT(DISTINCT ?directorLabel; SEPARATOR=", ") AS ?director)
+  (SAMPLE(?durVal) AS ?durationMinutes)
+  (GROUP_CONCAT(DISTINCT ?genreLabel; SEPARATOR="|") AS ?genresList)
+  (GROUP_CONCAT(DISTINCT ?subjectLabel; SEPARATOR="|") AS ?themesList)
   (SAMPLE(?image) AS ?posterImage)
   (SAMPLE(?iaId) AS ?archiveId)
   (SAMPLE(?imdbId) AS ?imdb)
@@ -706,9 +778,14 @@ export const buildPublicDomainProductionsSparql = (
 WHERE {
   ${wherePattern}
   OPTIONAL { ?item wdt:P1476 ?p1476Title . }
+  OPTIONAL { ?item schema:description ?descEnRaw . FILTER(LANG(?descEnRaw) = "en") }
+  OPTIONAL { ?item schema:description ?descPtRaw . FILTER(LANG(?descPtRaw) = "pt") }
   OPTIONAL { ?item wdt:P364 ?lang . ?lang rdfs:label ?langLabel . FILTER(LANG(?langLabel) IN ("pt", "en")) }
   OPTIONAL { ?item wdt:P577 ?pubDate . }
-  OPTIONAL { ?item wdt:P57 ?dir . ?dir rdfs:label ?directorLabel . FILTER(LANG(?directorLabel) IN ("pt", "en")) }
+  OPTIONAL { ?item wdt:P57 ?dir . }
+  OPTIONAL { ?item wdt:P2047 ?durVal . }
+  OPTIONAL { ?item wdt:P136 ?genreItem . }
+  OPTIONAL { ?item wdt:P921 ?subjectItem . }
   OPTIONAL { ?item wdt:P18 ?image . }
   OPTIONAL { ?item wdt:P724 ?iaId . }
   OPTIONAL { ?item wdt:P345 ?imdbId . }
@@ -717,10 +794,13 @@ WHERE {
   OPTIONAL { ?item wdt:P1651 ?ytId . }
   OPTIONAL { ?item wdt:P373 ?commonsStr . }
   SERVICE wikibase:label {
-    bd:serviceParam wikibase:language "pt,en,es,fr".
+    bd:serviceParam wikibase:language "en,pt,es,fr,de,it,ru".
     ?item rdfs:label ?itemLabel .
     ?item schema:description ?itemDescription .
     ?matchedInstance rdfs:label ?matchedInstanceLabel .
+    ?dir rdfs:label ?directorLabel .
+    ?genreItem rdfs:label ?genreLabel .
+    ?subjectItem rdfs:label ?subjectLabel .
   }
 }
 GROUP BY ?item
@@ -729,10 +809,8 @@ LIMIT ${limit}`;
 };
 
 /**
- * Pesquisa no Wikidata produções visuais em domínio público (P6216=Q19652):
- * - Série de televisão (P31=Q5398426)
- * - Curta-metragem de animação (P31=Q17517379)
- * - Filme com gênero filme documental (P31=Q11424 e P136=Q93204)
+ * Pesquisa no Wikidata produções visuais em domínio público (P6216=Q19652)
+ * importando metadados completos (P136 genres, P921 themes/main subject, P57 director, P2047 duration, etc.)
  */
 export const searchPublicDomainProductionsInWikidata = async (
     category: PublicDomainProductionCategory = 'all',
@@ -755,22 +833,27 @@ export const searchPublicDomainProductionsInWikidata = async (
             const isDocumentary =
                 b.isDocumentaryFlag?.value === "true" || b.isDocumentaryFlag?.value === "1";
 
-            let fallbackInstanceLabel = "Produção Visual";
-            if (instanceQid === "Q5398426") fallbackInstanceLabel = "Série de televisão";
-            else if (instanceQid === "Q17517379") fallbackInstanceLabel = "Curta-metragem de animação";
-            else if (instanceQid === "Q11424") {
-                fallbackInstanceLabel = isDocumentary ? "Filme (Documentário)" : "Filme";
-            }
+            const mappedType = INSTANCE_QID_TO_TYPE_MAP[instanceQid];
+            const supabaseType = isDocumentary
+                ? "documentary film"
+                : mappedType || b.instanceName?.value || "film";
 
-            const rawInstanceName = b.instanceName?.value || fallbackInstanceLabel;
-            const instanceLabel = isDocumentary && instanceQid === "Q11424"
-                ? `${rawInstanceName} • Documentário`
-                : rawInstanceName;
+            const instanceLabel = isDocumentary
+                ? "documentary film"
+                : mappedType || b.instanceName?.value || "film";
 
             let year = 0;
             if (b.date?.value) {
                 const match = b.date.value.match(/\d{4}/);
                 if (match) year = parseInt(match[0], 10);
+            }
+
+            let duration = "";
+            if (b.durationMinutes?.value) {
+                const durNum = Number(b.durationMinutes.value);
+                if (Number.isFinite(durNum) && durNum > 0) {
+                    duration = `${Math.floor(durNum)}m`;
+                }
             }
 
             const titleP1476 = b.titleP1476?.value || "";
@@ -781,6 +864,15 @@ export const searchPublicDomainProductionsInWikidata = async (
             const ofdbId = b.ofdb?.value || "";
             const youtubeId = b.youtube?.value || "";
             const commons = b.commons?.value || "";
+            const descriptionEn = b.descriptionEn?.value || "";
+            const descriptionPt = b.descriptionPt?.value || "";
+            const descriptionFallback = b.description?.value || descriptionEn || descriptionPt || "";
+            const directorName = b.director?.value ? sanitizeWikidataListValue(b.director.value) : "";
+            const genres = parseCleanPipeList(b.genresList?.value);
+            if (isDocumentary && !genres.some((g) => g.toLowerCase().includes("documentary"))) {
+                genres.unshift("Documentary");
+            }
+            const themes = parseCleanPipeList(b.themesList?.value);
 
             return {
                 wikidataId: qid,
@@ -788,12 +880,18 @@ export const searchPublicDomainProductionsInWikidata = async (
                 hasP1476: Boolean(titleP1476),
                 instanceQid,
                 instanceLabel,
+                supabaseType,
                 isDocumentary,
                 language: b.origLang?.value || "Não informado",
                 year,
-                description: b.description?.value || "",
-                director: b.director?.value || "Unknown",
-                posterUrl: b.posterImage?.value ? getWikimediaThumbnail(b.posterImage.value, 300) : "",
+                description: descriptionFallback,
+                descriptionEn,
+                descriptionPt,
+                director: directorName,
+                duration,
+                genres,
+                themes,
+                posterUrl: b.posterImage?.value ? getWikimediaThumbnail(b.posterImage.value, 600) : "",
                 videoUrl: iaId ? `https://archive.org/download/${iaId}/${iaId}.mp4` : "",
                 hasVideo: Boolean(iaId),
                 archiveId: iaId,

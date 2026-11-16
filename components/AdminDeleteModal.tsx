@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   ShieldAlert,
   Trash2,
@@ -16,9 +16,22 @@ import {
   Download,
   PlusCircle,
   Video,
+  Image as ImageIcon,
+  HardDrive,
+  LogOut,
 } from 'lucide-react';
 import { Movie } from '../types';
 import { addSupabaseMovie, deleteSupabaseMovies, upsertIdentifiers } from '../services/supabaseClient';
+import {
+  connectGoogleDrive,
+  getGoogleDriveAccessToken,
+  getGoogleDriveUserEmail,
+  clearGoogleDriveAccessToken,
+} from '../firebase';
+import {
+  DEFAULT_DRIVE_POSTER_FOLDER_ID,
+  uploadWikidataPosterToGoogleDrive,
+} from '../services/googleDrivePosterService';
 import {
   verifyCatalogTvSeriesPublicDomain,
   findPublicDomainTvSeries,
@@ -88,6 +101,52 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
   const [pdOnlyMissing, setPdOnlyMissing] = useState(false);
   const [showPdSparqlScript, setShowPdSparqlScript] = useState(false);
   const [copiedPdSparql, setCopiedPdSparql] = useState(false);
+
+  // --- Google Drive Poster Upload ({qid}.webp) ---
+  const [driveConnected, setDriveConnected] = useState<boolean>(() => Boolean(getGoogleDriveAccessToken()));
+  const [driveUserEmail, setDriveUserEmail] = useState<string | null>(() => getGoogleDriveUserEmail());
+  const [isConnectingDrive, setIsConnectingDrive] = useState(false);
+  const [savePosterToDrive, setSavePosterToDrive] = useState(true);
+
+  useEffect(() => {
+    let active = true;
+    if (getGoogleDriveAccessToken()) {
+      setDriveConnected(true);
+      setDriveUserEmail(getGoogleDriveUserEmail());
+      return;
+    }
+
+    setIsConnectingDrive(true);
+    connectGoogleDrive()
+      .then(({ user }) => {
+        if (!active) return;
+        setDriveConnected(true);
+        setDriveUserEmail(user?.email || getGoogleDriveUserEmail() || 'Conta Google conectada');
+      })
+      .catch((err: any) => {
+        if (!active) return;
+        const code = err?.code || '';
+        const msg = err?.message || String(err);
+        if (code === 'auth/popup-blocked' || msg.includes('popup-blocked')) {
+          setStatusMessage({
+            type: 'info',
+            text: 'O navegador bloqueou a janela automática do Google Drive. Clique em "Conectar Google Drive" na aba de Domínio Público para autorizar o envio de imagens.',
+          });
+        } else if (code !== 'auth/popup-closed-by-user' && code !== 'auth/cancelled-popup-request') {
+          setStatusMessage({
+            type: 'info',
+            text: `Conexão automática com Google Drive pendente (${msg}). Use "Conectar Google Drive" quando desejar salvar pôsteres.`,
+          });
+        }
+      })
+      .finally(() => {
+        if (active) setIsConnectingDrive(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const uniqueGenres = useMemo(() => {
     const genres = new Set<string>();
@@ -283,27 +342,97 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
     }
   };
 
+  const handleConnectDrive = async () => {
+    setIsConnectingDrive(true);
+    setStatusMessage(null);
+    try {
+      const { user } = await connectGoogleDrive();
+      setDriveConnected(true);
+      setDriveUserEmail(user?.email || user?.displayName || 'Conta Google conectada');
+      setStatusMessage({
+        type: 'success',
+        text: 'Google Drive conectado com sucesso! As imagens do Wikidata serão convertidas e salvas como {qid}.webp.',
+      });
+    } catch (err: any) {
+      setStatusMessage({
+        type: 'danger',
+        text: `Não foi possível conectar ao Google Drive: ${err?.message || String(err)}`,
+      });
+    } finally {
+      setIsConnectingDrive(false);
+    }
+  };
+
+  const handleDisconnectDrive = () => {
+    clearGoogleDriveAccessToken();
+    setDriveConnected(false);
+    setDriveUserEmail(null);
+  };
+
+  const resolvePosterUrlForImport = async (
+    qid: string,
+    wikidataPosterUrl: string
+  ): Promise<{ posterUrl: string; driveNote?: string; warningNote?: string }> => {
+    if (!wikidataPosterUrl) {
+      return { posterUrl: '' };
+    }
+    const token = getGoogleDriveAccessToken();
+    if (!savePosterToDrive || !token) {
+      return { posterUrl: wikidataPosterUrl };
+    }
+
+    try {
+      const uploaded = await uploadWikidataPosterToGoogleDrive({
+        qid,
+        imageUrl: wikidataPosterUrl,
+        accessToken: token,
+        folderId: DEFAULT_DRIVE_POSTER_FOLDER_ID,
+      });
+      const sizeText = uploaded.sizeBytes
+        ? ` (${Math.max(1, Math.round(uploaded.sizeBytes / 1024))} KB)`
+        : '';
+      return {
+        posterUrl: uploaded.posterUrl,
+        driveNote: uploaded.alreadyExisted
+          ? `Pôster ${uploaded.fileName} reutilizado da pasta do Google Drive.`
+          : `Pôster ${uploaded.fileName}${sizeText} salvo na pasta do Google Drive.`,
+      };
+    } catch (err: any) {
+      return {
+        posterUrl: wikidataPosterUrl,
+        warningNote: `Aviso: falha ao enviar ${qid}.webp para o Google Drive (${err?.message || String(err)}); link do Wikimedia usado como alternativa.`,
+      };
+    }
+  };
+
   const handleImportSeries = async (item: WikidataPublicDomainTvSeries) => {
     setImportingQid(item.wikidataId);
     setStatusMessage(null);
     try {
+      const { posterUrl, driveNote, warningNote } = await resolvePosterUrlForImport(
+        item.wikidataId,
+        item.posterUrl
+      );
+
       await addSupabaseMovie({
         wikidataId: item.wikidataId,
         title: item.title,
         originalTitle: item.titleP1476 || item.title,
         description: item.description,
+        descriptionEn: item.description,
         year: item.year || 1950,
         director: item.director || 'Unknown',
         language: item.language || 'English',
-        posterUrl: item.posterUrl,
+        posterUrl,
         videoUrl: item.videoUrl,
         type: 'television series',
         genres: ['Television Series'],
         license: 'Public Domain (Q19652)',
       });
+      const extraNote = [driveNote, warningNote].filter(Boolean).join(' ');
       setStatusMessage({
-        type: 'success',
-        text: `Série "${item.title}" (${item.wikidataId}) importada para o catálogo.`,
+        type: warningNote ? 'info' : 'success',
+        text: `Série "${item.title}" (${item.wikidataId}) importada para o catálogo.${extraNote ? ' ' + extraNote : ''}`,
       });
       onRefresh();
     } catch (err: any) {
@@ -382,31 +511,42 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
     setImportingQid(item.wikidataId);
     setStatusMessage(null);
     try {
-      let type = item.instanceLabel || 'film';
-      let genres = ['Classic'];
-      if (item.instanceQid === 'Q5398426') {
-        type = 'television series';
-        genres = ['Television Series'];
-      } else if (item.instanceQid === 'Q17517379') {
-        type = 'animated short film';
-        genres = ['Animation', 'Short'];
-      } else if (item.isDocumentary) {
-        type = 'documentary film';
-        genres = ['Documentary'];
-      }
+      const type = item.supabaseType || item.instanceLabel || 'film';
+      const genres =
+        item.genres && item.genres.length > 0
+          ? item.genres
+          : item.isDocumentary
+            ? ['Documentary']
+            : item.instanceQid === 'Q5398426'
+              ? ['Television Series']
+              : item.instanceQid === 'Q17517379'
+                ? ['Animation', 'Short']
+                : ['Classic'];
+      const themes = item.themes && item.themes.length > 0 ? item.themes : undefined;
+
+      const { posterUrl, driveNote, warningNote } = await resolvePosterUrlForImport(
+        item.wikidataId,
+        item.posterUrl
+      );
+
+      const englishDescription = item.descriptionEn || item.description || '';
 
       await addSupabaseMovie({
         wikidataId: item.wikidataId,
         title: item.originalTitle,
         originalTitle: item.originalTitle,
-        description: item.description,
+        description: englishDescription,
+        descriptionEn: englishDescription,
+        descriptionPt: item.descriptionPt || undefined,
         year: item.year || 1950,
-        director: item.director || 'Unknown',
+        director: item.director || undefined,
+        duration: item.duration || undefined,
         language: item.language !== 'Não informado' ? item.language : 'Unknown',
-        posterUrl: item.posterUrl,
+        posterUrl,
         videoUrl: item.videoUrl,
         type,
         genres,
+        themes,
         license: 'Public Domain (Q19652)',
       });
 
@@ -419,9 +559,16 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
         commons: item.commons,
       });
 
+      const hints: string[] = [];
+      if (driveNote) hints.push(driveNote);
+      if (warningNote) hints.push(warningNote);
+      if (item.posterUrl && savePosterToDrive && !getGoogleDriveAccessToken()) {
+        hints.push('Dica: conecte o Google Drive acima para enviar a imagem como {qid}.webp automaticamente.');
+      }
+
       setStatusMessage({
-        type: 'success',
-        text: `Produção "${item.originalTitle}" (${item.wikidataId}) importada para o catálogo.`,
+        type: warningNote ? 'info' : 'success',
+        text: `Produção "${item.originalTitle}" (${item.wikidataId}) importada para o catálogo.${hints.length ? ' ' + hints.join(' ') : ''}`,
       });
       onRefresh();
     } catch (err: any) {
@@ -1055,16 +1202,13 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                       </p>
                       <div className="d-flex flex-wrap gap-2 small">
                         <span className="badge bg-dark border border-secondary">
-                          P31 = Q5398426 (Série de televisão)
-                        </span>
-                        <span className="badge bg-dark border border-secondary">
-                          P31 = Q17517379 (Curta-metragem de animação)
-                        </span>
-                        <span className="badge bg-dark border border-secondary">
-                          P31 = Q11424 + P136 = Q93204 (Filme Documentário)
+                          14 instâncias (film Q11424, short film, television film, silent film, animated film, television series, miniseries, documentário...)
                         </span>
                         <span className="badge bg-success bg-opacity-25 text-success border border-success">
                           P6216 = Q19652 (Domínio Público)
+                        </span>
+                        <span className="badge bg-dark border border-info text-info">
+                          Importa P136 (genres), P921 (themes), P57 (director), P2047 (duration)
                         </span>
                       </div>
                     </div>
@@ -1107,10 +1251,21 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                         onChange={(e) => setPdSearchCategory(e.target.value as PublicDomainProductionCategory)}
                         disabled={isSearchingPdProductions}
                       >
-                        <option value="all">Todas (Série TV, Curta Animação e Filme Documentário)</option>
-                        <option value="tv_series">Série de televisão (P31 = Q5398426)</option>
-                        <option value="animated_short">Curta-metragem de animação (P31 = Q17517379)</option>
-                        <option value="documentary_film">Filme + Gênero Documentário (P31 = Q11424 / P136 = Q93204)</option>
+                        <option value="all">Todas as instâncias</option>
+                        <option value="film">film (Q11424)</option>
+                        <option value="short_film">short film (Q24862)</option>
+                        <option value="television_film">television film (Q506240)</option>
+                        <option value="television_program">television program (Q15416)</option>
+                        <option value="television_series_episode">television series episode (Q21191270)</option>
+                        <option value="silent_film">silent film (Q226730)</option>
+                        <option value="silent_short_film">silent short film (Q20667187)</option>
+                        <option value="animated_short">animated short film (Q17517379)</option>
+                        <option value="animated_film">animated film (Q202866)</option>
+                        <option value="tv_series">television series (Q5398426)</option>
+                        <option value="film_series">film series (Q24856)</option>
+                        <option value="open_source_film">open-source film (Q917641)</option>
+                        <option value="documentary_film">gênero documentário (Q11424 + P136 = Q93204)</option>
+                        <option value="miniseries">miniseries (Q1259759)</option>
                       </select>
                     </div>
                     <div className="col-md-2">
@@ -1121,6 +1276,7 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                         onChange={(e) => setPdSearchLimit(Number(e.target.value))}
                         disabled={isSearchingPdProductions}
                       >
+                        <option value={50}>50</option>
                         <option value={100}>100</option>
                         <option value={150}>150</option>
                         <option value={250}>250</option>
@@ -1153,6 +1309,88 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                         >
                           <Download size={14} />
                           <span>Exportar CSV</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Barra de Conexão Google Drive para salvar pôster {qid}.webp */}
+                  <div className="mt-3 pt-3 border-top border-secondary border-opacity-50 d-flex flex-wrap justify-content-between align-items-center gap-3">
+                    <div className="d-flex flex-wrap align-items-center gap-2 small">
+                      <HardDrive size={16} className={driveConnected ? 'text-success' : 'text-secondary'} />
+                      <span className="fw-semibold text-white">Google Drive (Pôster {'{qid}.webp'} &lt; 1 MB):</span>
+                      {isConnectingDrive && !driveConnected ? (
+                        <span className="text-info d-inline-flex align-items-center gap-1">
+                          <Loader2 size={13} className="animate-spin" />
+                          <span>Conectando ao Google Drive automaticamente...</span>
+                        </span>
+                      ) : driveConnected ? (
+                        <>
+                          <span className="badge bg-success bg-opacity-25 text-success border border-success">
+                            Conectado{driveUserEmail ? ` • ${driveUserEmail}` : ''}
+                          </span>
+                          <label className="form-check-label d-flex align-items-center gap-1 text-white-50 ms-2">
+                            <input
+                              type="checkbox"
+                              className="form-check-input mt-0"
+                              checked={savePosterToDrive}
+                              onChange={(e) => setSavePosterToDrive(e.target.checked)}
+                            />
+                            <span>
+                              Salvar imagem P18 (&lt; 1 MB) na pasta{' '}
+                              <code className="text-info">{DEFAULT_DRIVE_POSTER_FOLDER_ID}</code> e gravar em posterurl
+                            </span>
+                          </label>
+                        </>
+                      ) : (
+                        <span className="text-secondary">
+                          Conecte o Google Drive para salvar automaticamente a imagem do Wikidata (se existir, &lt; 1 MB) como{' '}
+                          <code className="text-info">{'{qid}.webp'}</code> na pasta{' '}
+                          <code className="text-info">{DEFAULT_DRIVE_POSTER_FOLDER_ID}</code>.
+                        </span>
+                      )}
+                    </div>
+
+                    <div>
+                      {driveConnected ? (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-secondary d-flex align-items-center gap-1"
+                          onClick={handleDisconnectDrive}
+                        >
+                          <LogOut size={14} />
+                          <span>Desconectar Drive</span>
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          className="btn btn-sm bg-white text-dark fw-medium border d-inline-flex align-items-center gap-2 px-3 shadow-sm"
+                          onClick={handleConnectDrive}
+                          disabled={isConnectingDrive}
+                        >
+                          {isConnectingDrive ? (
+                            <Loader2 size={15} className="animate-spin text-dark" />
+                          ) : (
+                            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">
+                              <path
+                                fill="#4285F4"
+                                d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.82-2.4 3.68v3.05h3.88c2.27-2.09 3.665-5.17 3.665-9.17Z"
+                              />
+                              <path
+                                fill="#34A853"
+                                d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.11-6.72-4.96H1.29v3.14C3.26 21.3 7.31 24 12 24Z"
+                              />
+                              <path
+                                fill="#FBBC05"
+                                d="M5.28 14.24c-.24-.72-.38-1.49-.38-2.24s.14-1.52.38-2.24V6.62H1.29C.47 8.24 0 10.06 0 12s.47 3.76 1.29 5.38l3.99-3.14Z"
+                              />
+                              <path
+                                fill="#EA4335"
+                                d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.31 0 3.26 2.7 1.29 6.62l3.99 3.14c.95-2.85 3.6-4.96 6.72-4.96Z"
+                              />
+                            </svg>
+                          )}
+                          <span>Conectar Google Drive</span>
                         </button>
                       )}
                     </div>
@@ -1234,9 +1472,28 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                                     </a>
                                   </td>
                                   <td className="small fw-bold">
-                                    {item.originalTitle}
-                                    {!item.hasP1476 && (
-                                      <span className="ms-2 badge bg-secondary">Label</span>
+                                    <div className="d-flex align-items-center gap-2">
+                                      <span>{item.originalTitle}</span>
+                                      {!item.hasP1476 && (
+                                        <span className="badge bg-secondary">Label</span>
+                                      )}
+                                      {item.posterUrl && (
+                                        <span
+                                          className="badge bg-dark border border-secondary text-info d-inline-flex align-items-center gap-1"
+                                          title="Possui imagem P18 no Wikidata"
+                                        >
+                                          <ImageIcon size={11} />
+                                          <span>P18</span>
+                                        </span>
+                                      )}
+                                    </div>
+                                    {(item.descriptionEn) && (
+                                      <div
+                                        className="text-secondary fw-normal text-truncate"
+                                        style={{ maxWidth: '340px', fontSize: '0.72rem' }}
+                                      >
+                                        {item.descriptionEn}
+                                      </div>
                                     )}
                                   </td>
                                   <td className="small">
@@ -1314,7 +1571,7 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
               <>
                 <span className="text-secondary small">
                   {activeTab === 'pd_search'
-                    ? 'Wikidata SPARQL • P31 (Q5398426 / Q17517379 / Q11424+P136:Q93204) • P6216=Q19652 • P1476'
+                    ? 'Wikidata SPARQL • 14 Instâncias P31 • P6216=Q19652 • P1476 • P136 • P921 • P57 • P2047'
                     : 'Wikidata SPARQL • P31=Q5398426 • P6216=Q19652 • P1476'}
                 </span>
                 <button

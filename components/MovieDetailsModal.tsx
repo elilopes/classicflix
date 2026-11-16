@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   X, Play, Heart, Edit3, Save, Loader2, 
-  ImageIcon, Info, User, ChevronLeft, Calendar, Globe, Award, Sparkles, BookOpen, Star, History, ExternalLink, RefreshCw, Captions, PlayCircle, Search, Clock, CheckCircle, Download, Share2, MessageSquare, AlertCircle, Trophy, Cpu
+  ImageIcon, Info, User, ChevronLeft, Calendar, Globe, Award, Sparkles, BookOpen, Star, History, ExternalLink, RefreshCw, Captions, Search, Clock, CheckCircle, Download, Share2, MessageSquare, AlertCircle, Trophy
 } from 'lucide-react';
 import { toPng } from 'html-to-image';
 import { WikipediaModal } from './WikipediaModal';
@@ -13,7 +13,6 @@ import { WikidataHelperModal } from './WikidataHelperModal';
 import { WikidataEditor } from './WikidataEditor';
 import { ReviewSection } from './ReviewSection';
 import { BestReviewsModal } from './BestReviewsModal';
-import { McpConnectedAppsModal } from './McpConnectedAppsModal';
 import { Movie, AppLanguage, UserMovieInteraction } from '../types';
 import { updateSupabaseMovie } from '../services/supabaseClient';
 import { fetchMovieImages } from '../services/wikidataService';
@@ -94,7 +93,6 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
   const [videoSearchMessage, setVideoSearchMessage] = useState<string | null>(null);
   const [isSearchingBanner, setIsSearchingBanner] = useState(false);
   const [bannerSearchMessage, setBannerSearchMessage] = useState<string | null>(null);
-  const [showMcpModal, setShowMcpModal] = useState(false);
   
   const posterRes = resolveMoviePoster(movie);
   const [activePosterUrl, setActivePosterUrl] = useState<string>(posterRes.primaryUrl || movie.posterUrl || '');
@@ -377,10 +375,6 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
   const openWhereToWatch = () => {
       const query = `onde assistir ${movie.titlePt || movie.title} ${movie.year} filme`;
       window.open(`https://www.google.com/search?q=${encodeURIComponent(query)}`, '_blank');
-  };
-
-  const openTrailer = () => {
-      if (movie.trailerUrl) window.open(movie.trailerUrl, '_blank');
   };
 
   const handleExportMoviePdf = async () => {
@@ -852,7 +846,7 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
   };
 
   const renderInfoModalContent = () => (
-    <div className="modal fade show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.95)', zIndex: 1100 }}>
+    <div className="modal fade show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.95)', zIndex: 1200 }}>
         <div className="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable" style={{ maxWidth: '90vw' }}>
             <div className="modal-content bg-dark border-secondary shadow-lg overflow-hidden" style={{ minHeight: '80vh' }}>
                 <div className="modal-header border-secondary d-flex justify-content-between align-items-center py-3 bg-black">
@@ -1141,7 +1135,7 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
   }
 
   const renderEditMetadataModal = () => (
-    <div className="modal fade show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.95)', zIndex: 1200 }}>
+    <div className="modal fade show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.95)', zIndex: 1250 }}>
       <div className="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable" style={{ maxWidth: '90vw' }}>
         <div className="modal-content bg-dark border-secondary shadow-lg overflow-hidden" style={{ minHeight: '80vh' }}>
           <div className="modal-header border-secondary d-flex justify-content-between align-items-center py-3 bg-black">
@@ -1243,7 +1237,7 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
 
   return (
     <>
-      <div className="modal fade show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.8)', zIndex: 1055, backdropFilter: 'blur(8px)' }}>
+      <div className="modal fade show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.8)', zIndex: 1150, backdropFilter: 'blur(8px)' }}>
         <div className="modal-dialog modal-xl modal-dialog-centered modal-dialog-scrollable">
           <motion.div 
             initial={{ scale: 0.7, rotate: -10, opacity: 0 }}
@@ -1271,7 +1265,15 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
                 <div className="position-absolute top-0 start-0 w-100 h-100" style={{ background: 'linear-gradient(to bottom, transparent 0%, rgba(20,20,20,1) 100%)' }}></div>
               </div>
               
-              <button className="btn-close btn-close-white position-absolute top-0 end-0 m-4 z-3 shadow-none" onClick={onClose}></button>
+              <button
+                type="button"
+                aria-label="Fechar"
+                className="btn btn-dark position-absolute top-0 end-0 m-3 m-md-4 rounded-circle border border-secondary d-flex align-items-center justify-content-center shadow"
+                style={{ width: '40px', height: '40px', backgroundColor: 'rgba(0,0,0,0.75)', zIndex: 30 }}
+                onClick={onClose}
+              >
+                <X size={20} className="text-white" />
+              </button>
               
               <div className="modal-hero-content position-absolute bottom-0 start-0 w-100 p-4 p-lg-5 z-2 d-flex flex-column justify-content-end">
                 <div className="mb-4 d-flex align-items-center gap-3">
@@ -1361,14 +1363,6 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
                               </button>
 
                               <button 
-                                className={`btn btn-lg px-4 d-flex align-items-center gap-2 shadow-sm rounded-pill ${movie.trailerUrl ? 'btn-warning text-dark' : 'btn-outline-secondary text-white-50'}`}
-                                onClick={openTrailer} 
-                                disabled={!movie.trailerUrl}
-                              >
-                                <PlayCircle size={20} /> {t.trailer}
-                              </button>
-
-                              <button 
                                 className="btn btn-lg btn-info px-4 d-flex align-items-center gap-2 shadow-sm text-white rounded-pill"
                                 onClick={() => setShowSourcesLightbox(true)}
                               >
@@ -1381,15 +1375,6 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
                           </div>
 
                           <div className="d-flex gap-2 flex-wrap">
-                              {/* Botão MCP & Google Connected Apps Platform */}
-                              <button 
-                                className="btn btn-dark border-secondary px-3 py-2 d-flex align-items-center gap-2 rounded-3 text-warning shadow-sm" 
-                                onClick={() => setShowMcpModal(true)}
-                                title="Model Context Protocol & Google Connected Apps Platform (OAuth 2.1)"
-                              >
-                                <Cpu size={18} /> <span>MCP / Connected Apps</span>
-                              </button>
-
                               <button 
                                 className="btn btn-dark border-secondary px-3 py-2 d-flex align-items-center gap-2 rounded-3" 
                                 onClick={() => {
@@ -1554,13 +1539,6 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
         currentUser={currentUser}
       />
 
-      <McpConnectedAppsModal
-        isOpen={showMcpModal}
-        onClose={() => setShowMcpModal(false)}
-        appLanguage={language}
-        currentMovie={movie}
-      />
-
       {/* Hidden Card for Export */}
       <div style={{ position: 'absolute', left: '-9999px', top: '-9999px' }}>
         <div 
@@ -1637,7 +1615,7 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
         {showSourcesLightbox && (
           <div 
             className="modal fade show d-block" 
-            style={{ backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 1100, backdropFilter: 'blur(10px)' }}
+            style={{ backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 1250, backdropFilter: 'blur(10px)' }}
             onClick={() => setShowSourcesLightbox(false)}
           >
             <div className="modal-dialog modal-dialog-centered" onClick={e => e.stopPropagation()}>

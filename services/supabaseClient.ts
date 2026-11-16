@@ -187,19 +187,26 @@ export const fetchSupabaseMovies = async (): Promise<Movie[]> => {
 
 const generateMovieRowId = (): string => {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-        return crypto.randomUUID().replace(/-/g, '').slice(0, 8);
+        return crypto.randomUUID().replace(/-/g, '').slice(0, 12);
     }
-    return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`.slice(0, 8);
+    return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`.slice(0, 12);
 };
 
 const toCsvText = (val: unknown): string | null => {
+    const cleanToken = (s: unknown) =>
+        String(s || '')
+            .replace(/[\[\]"()]/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+
     if (Array.isArray(val)) {
-        const joined = val.map((v) => String(v || '').trim()).filter(Boolean).join(',');
+        const joined = val.map(cleanToken).filter(Boolean).join(',');
         return joined || null;
     }
     if (typeof val === 'string') {
-        const trimmed = val.trim();
-        return trimmed || null;
+        const parts = val.split(',').map(cleanToken).filter(Boolean);
+        const joined = parts.join(',');
+        return joined || null;
     }
     return null;
 };
@@ -216,7 +223,7 @@ const formatAwardsForDb = (awards: unknown): string | null => {
 };
 
 // Fix: Implement addSupabaseMovie to persist new movies directly to movies, description, and technicaldetails
-export const addSupabaseMovie = async (movie: Partial<Movie>) => {
+export const addSupabaseMovie = async (movie: Partial<Movie> & { descriptionEn?: string }) => {
     const supabase = await getSupabase();
     if (!supabase) return;
 
@@ -228,15 +235,16 @@ export const addSupabaseMovie = async (movie: Partial<Movie>) => {
         throw new Error("Cannot add movie: missing wikidataId");
     }
 
-    // Preserve existing id if wikidataid already exists; otherwise guarantee a non-null id
     const { data: existingMovie } = await supabase
         .from('movies')
         .select('id')
         .eq('wikidataid', finalWikidataId)
         .maybeSingle();
 
-    const finalId = existingMovie?.id || movie.id || generateMovieRowId();
+    const providedId = typeof movie.id === 'string' ? movie.id.trim() : '';
+    const finalId = providedId || existingMovie?.id || generateMovieRowId();
     const finalTitle = movie.title || movie.originalTitle || finalWikidataId;
+    const englishDescription = movie.descriptionEn || movie.description || null;
 
     const { error: movieError } = await supabase.from('movies').upsert([{
         id: finalId,
@@ -251,7 +259,7 @@ export const addSupabaseMovie = async (movie: Partial<Movie>) => {
         videourl: movie.videoUrl || null,
         trailerurl: movie.trailerUrl || null,
         subtitleurl: movie.subtitleUrl || null,
-        description: movie.description || null,
+        description: englishDescription,
         type: movie.type || 'film',
         awards: formatAwardsForDb(movie.awards),
         popularity: movie.popularity ?? 0,
@@ -262,65 +270,43 @@ export const addSupabaseMovie = async (movie: Partial<Movie>) => {
         throw movieError;
     }
 
-    // Persist auxiliary description record
+    // Persist auxiliary description record using wikidataid as relationship key
     try {
-        const { data: existingDesc } = await supabase
-            .from('description')
-            .select('id')
-            .eq('wikidataid', finalWikidataId)
-            .maybeSingle();
-
-        const descPayload = {
+        const { error: descError } = await supabase.from('description').upsert([{
+            wikidataid: finalWikidataId,
+            id: finalId,
             title: finalTitle,
-            descriptionen: movie.description || null,
+            descriptionen: englishDescription,
             descriptionpt: movie.descriptionPt || null,
             descriptionhi: movie.descriptionHi || null,
             descriptionru: movie.descriptionRu || null,
             descriptionit: movie.descriptionIt || null,
-        };
-
-        if (existingDesc?.id) {
-            await supabase.from('description').update(descPayload).eq('wikidataid', finalWikidataId);
-        } else {
-            await supabase.from('description').insert([{
-                id: finalId,
-                wikidataid: finalWikidataId,
-                ...descPayload,
-            }]);
+        }], { onConflict: 'wikidataid' });
+        if (descError) {
+            console.warn("Aviso ao salvar tabela description:", descError.message);
         }
     } catch (descErr) {
         console.warn("Aviso ao salvar tabela description:", descErr);
     }
 
-    // Persist auxiliary technicaldetails record
+    // Persist auxiliary technicaldetails record using wikidataid as relationship key
     try {
-        const { data: existingTech } = await supabase
-            .from('technicaldetails')
-            .select('id')
-            .eq('wikidataid', finalWikidataId)
-            .maybeSingle();
-
-        const techPayload = {
+        const { error: techError } = await supabase.from('technicaldetails').upsert([{
+            wikidataid: finalWikidataId,
+            id: finalId,
             title: finalTitle,
             duration: movie.duration || null,
             genres: toCsvText(movie.genres),
-            director: movie.director || null,
+            director: movie.director && movie.director !== 'Unknown' ? movie.director : null,
             sourcelabel: movie.sourceLabel || movie.license || null,
             castmembers: toCsvText(movie.cast),
             cinematographers: toCsvText(movie.cinematographers),
             composers: toCsvText(movie.composers),
             themes: toCsvText(movie.themes),
             rating: movie.rating || null,
-        };
-
-        if (existingTech?.id) {
-            await supabase.from('technicaldetails').update(techPayload).eq('wikidataid', finalWikidataId);
-        } else {
-            await supabase.from('technicaldetails').insert([{
-                id: finalId,
-                wikidataid: finalWikidataId,
-                ...techPayload,
-            }]);
+        }], { onConflict: 'wikidataid' });
+        if (techError) {
+            console.warn("Aviso ao salvar tabela technicaldetails:", techError.message);
         }
     } catch (techErr) {
         console.warn("Aviso ao salvar tabela technicaldetails:", techErr);
@@ -331,12 +317,6 @@ export const addSupabaseMovie = async (movie: Partial<Movie>) => {
 export const updateSupabaseMovie = async (wikidataId: string, updates: any) => {
     const supabase = await getSupabase();
     if (!supabase) return;
-
-    const { data: existingMovie } = await supabase
-        .from('movies')
-        .select('id')
-        .eq('wikidataid', wikidataId)
-        .maybeSingle();
 
     const { error: movieError } = await supabase.from('movies').update({
         title: updates.title,
@@ -360,42 +340,20 @@ export const updateSupabaseMovie = async (wikidataId: string, updates: any) => {
         throw movieError;
     }
 
-    const rowId = existingMovie?.id || updates.id || generateMovieRowId();
-
     try {
-        const { data: existingDesc } = await supabase
-            .from('description')
-            .select('id')
-            .eq('wikidataid', wikidataId)
-            .maybeSingle();
-
-        const descPayload = {
+        await supabase.from('description').upsert([{
+            wikidataid: wikidataId,
             title: updates.title,
             descriptionen: updates.description ?? null,
             descriptionpt: updates.descriptionPt ?? null,
-        };
-
-        if (existingDesc?.id) {
-            await supabase.from('description').update(descPayload).eq('wikidataid', wikidataId);
-        } else {
-            await supabase.from('description').insert([{
-                id: rowId,
-                wikidataid: wikidataId,
-                ...descPayload,
-            }]);
-        }
+        }], { onConflict: 'wikidataid' });
     } catch (descErr) {
         console.warn("Aviso ao atualizar tabela description:", descErr);
     }
 
     try {
-        const { data: existingTech } = await supabase
-            .from('technicaldetails')
-            .select('id')
-            .eq('wikidataid', wikidataId)
-            .maybeSingle();
-
-        const techPayload = {
+        await supabase.from('technicaldetails').upsert([{
+            wikidataid: wikidataId,
             title: updates.title,
             duration: updates.duration ?? null,
             genres: toCsvText(updates.genres),
@@ -406,17 +364,7 @@ export const updateSupabaseMovie = async (wikidataId: string, updates: any) => {
             composers: toCsvText(updates.composers),
             themes: toCsvText(updates.themes),
             rating: updates.rating ?? null,
-        };
-
-        if (existingTech?.id) {
-            await supabase.from('technicaldetails').update(techPayload).eq('wikidataid', wikidataId);
-        } else {
-            await supabase.from('technicaldetails').insert([{
-                id: rowId,
-                wikidataid: wikidataId,
-                ...techPayload,
-            }]);
-        }
+        }], { onConflict: 'wikidataid' });
     } catch (techErr) {
         console.warn("Aviso ao atualizar tabela technicaldetails:", techErr);
     }
@@ -733,23 +681,27 @@ export const upsertIdentifiers = async (wikidataId: string, ids: {
     youtubeId?: string;
     commons?: string;
 }) => {
-    const supabase = await getSupabase();
-    if (!supabase) return;
-    
-    const { error } = await supabase.from('identifiers').upsert([{
-        wikidataid: wikidataId,
-        archiveid: ids.archiveId || null,
-        imdbid: ids.imdbId || null,
-        googleknowid: ids.googleKnowId || null,
-        ofdbid: ids.ofdbId || null,
-        openmdbid: ids.openMdbId || null,
-        youtube: ids.youtubeId || null,
-        commons: ids.commons || null,
-        updatedat: new Date().toISOString(),
-    }], { onConflict: 'wikidataid' });
+    try {
+        const supabase = await getSupabase();
+        if (!supabase) return;
+        
+        const { error } = await supabase.from('identifiers').upsert([{
+            wikidataid: wikidataId,
+            archiveid: ids.archiveId || null,
+            imdbid: ids.imdbId || null,
+            googleknowid: ids.googleKnowId || null,
+            ofdbid: ids.ofdbId || null,
+            openmdbid: ids.openMdbId || null,
+            youtube: ids.youtubeId || null,
+            commons: ids.commons || null,
+            updatedat: new Date().toISOString(),
+        }], { onConflict: 'wikidataid' });
 
-    if (error) {
-        console.error("Erro ao salvar identifiers:", error.message);
+        if (error) {
+            console.warn("Aviso ao salvar identifiers (RLS/DB):", error.message);
+        }
+    } catch (e) {
+        console.warn("Aviso ao salvar identifiers:", e);
     }
 };
 

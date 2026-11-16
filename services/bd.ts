@@ -174,17 +174,17 @@ export const signInWithWikipedia = async (wikiUser: any) => {
 };
 
 export const signOutUser = async () => {
-    const sb = await getSupabase();
-    if (sb) {
-        try { await sb.auth.signOut(); } catch (e) {}
-    }
+    try {
+        localStorage.removeItem('classicflix_user');
+    } catch (e) {}
     try {
         const { auth, signOut } = await import('../firebase');
         await signOut(auth);
     } catch (e) {}
-    try {
-        localStorage.removeItem('classicflix_user');
-    } catch (e) {}
+    const sb = await getSupabase();
+    if (sb) {
+        try { await sb.auth.signOut(); } catch (e) {}
+    }
     return { error: null };
 };
 
@@ -206,7 +206,7 @@ export const subscribeToAuthChanges = async (callback: (user: any | null) => voi
     let unsubscribeFirebase: (() => void) | null = null;
     try {
         const { auth, onAuthStateChanged } = await import('../firebase');
-        unsubscribeFirebase = onAuthStateChanged(auth, (fbUser) => {
+        unsubscribeFirebase = onAuthStateChanged(auth, async (fbUser) => {
             if (fbUser) {
                 const u = {
                     id: fbUser.uid,
@@ -222,6 +222,27 @@ export const subscribeToAuthChanges = async (callback: (user: any | null) => voi
                 };
                 try { localStorage.setItem('classicflix_user', JSON.stringify(u)); } catch (e) {}
                 callback(u);
+            } else {
+                // If Firebase signed out, preserve Supabase or Wikipedia session if active, otherwise notify null
+                try {
+                    const stored = localStorage.getItem('classicflix_user');
+                    if (stored) {
+                        const parsed = JSON.parse(stored);
+                        if (parsed && parsed.provider === 'wikipedia') {
+                            callback(parsed);
+                            return;
+                        }
+                    }
+                    if (sb) {
+                        const { data: { session } } = await sb.auth.getSession();
+                        if (session?.user) {
+                            callback(session.user);
+                            return;
+                        }
+                    }
+                    localStorage.removeItem('classicflix_user');
+                } catch (e) {}
+                callback(null);
             }
         });
     } catch (e) {}

@@ -170,6 +170,60 @@ async function startServer() {
     }
   });
 
+  // Proxy public Wikimedia / Wikidata image URLs so client canvas can convert them to .webp without CORS issues
+  app.get("/api/drive/proxy-image", async (req, res) => {
+    const rawUrl = typeof req.query.url === "string" ? req.query.url.trim() : "";
+    if (!rawUrl) {
+      return res.status(400).json({ error: "Parâmetro url é obrigatório" });
+    }
+
+    let parsed: URL;
+    try {
+      parsed = new URL(rawUrl);
+    } catch {
+      return res.status(400).json({ error: "URL inválida" });
+    }
+
+    const allowedHosts = new Set([
+      "commons.wikimedia.org",
+      "upload.wikimedia.org",
+      "www.wikidata.org",
+    ]);
+
+    if (parsed.protocol !== "https:" || !allowedHosts.has(parsed.hostname.toLowerCase())) {
+      return res.status(403).json({ error: "Host não permitido para proxy de imagem" });
+    }
+
+    try {
+      const upstream = await fetch(parsed.toString(), {
+        redirect: "follow",
+        headers: {
+          "User-Agent": "ClassicFlixBot/1.0 (https://classicflix.app; public-domain-archiver)",
+          "Accept": "image/*,*/*;q=0.8",
+        },
+      });
+
+      if (!upstream.ok) {
+        return res.status(upstream.status).json({
+          error: `Falha ao baixar imagem do Wikimedia (${upstream.status})`,
+        });
+      }
+
+      const contentType = upstream.headers.get("content-type") || "image/jpeg";
+      if (!contentType.startsWith("image/")) {
+        return res.status(415).json({ error: `Conteúdo retornado não é imagem: ${contentType}` });
+      }
+
+      const arrayBuf = await upstream.arrayBuffer();
+      res.setHeader("Content-Type", contentType);
+      res.setHeader("Cache-Control", "public, max-age=3600");
+      res.send(Buffer.from(arrayBuf));
+    } catch (err: any) {
+      console.error("[Proxy Image Error]:", err);
+      res.status(500).json({ error: err?.message || "Erro ao buscar imagem remota" });
+    }
+  });
+
   // API endpoint to synchronize posters from Google Drive to Supabase movies table
   app.post("/api/drive/sync-posters", async (req, res) => {
     const { 

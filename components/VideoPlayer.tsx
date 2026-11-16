@@ -36,6 +36,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [isResolving, setIsResolving] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isNative, setIsNative] = useState(true);
+  const [skipCors, setSkipCors] = useState(false);
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -141,6 +142,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const resolveUrl = async () => {
       setIsResolving(true);
       setError(null);
+      setSkipCors(false);
       try {
         let finalUrl = src;
         let native = true;
@@ -222,10 +224,25 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 onPause={() => setIsPlaying(false)}
                 onClick={togglePlay}
                 onError={() => {
+                    if (subtitleUrl && !skipCors) {
+                      setSkipCors(true);
+                      return;
+                    }
+                    if (src.includes('archive.org')) {
+                      let archId = '';
+                      if (src.includes('details/')) archId = src.split('details/')[1].split('/')[0];
+                      else if (src.includes('download/')) archId = src.split('download/')[1].split('/')[0];
+                      if (archId) {
+                        setIsNative(false);
+                        setResolvedSrc(`https://archive.org/embed/${archId}?autoplay=1`);
+                        setError(null);
+                        return;
+                      }
+                    }
                     console.error("Video Error: Failed to load video correctly.");
                     setError("Erro ao carregar o vídeo. Verifique se o formato é suportado pelo seu navegador.");
                 }}
-                crossOrigin="anonymous"
+                crossOrigin={subtitleUrl && !skipCors ? "anonymous" : undefined}
             >
                 {subtitleUrl && (
                     <track 

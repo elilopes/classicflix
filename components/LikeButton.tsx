@@ -19,9 +19,15 @@ export const LikeButton: React.FC<LikeButtonProps> = ({ targetId, targetType, in
     if (!user) return;
 
     const likeRef = doc(db, 'likes', `${user.uid}_${targetId}`);
-    const unsubscribe = onSnapshot(likeRef, (doc) => {
-      setIsLiked(doc.exists());
-    });
+    const unsubscribe = onSnapshot(
+      likeRef,
+      (docSnap) => {
+        setIsLiked(docSnap.exists());
+      },
+      (err) => {
+        console.warn('Like listener fallback:', err?.message || err);
+      }
+    );
 
     return () => unsubscribe();
   }, [targetId, user]);

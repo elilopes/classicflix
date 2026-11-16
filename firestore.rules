@@ -75,7 +75,7 @@ service cloud.firestore {
 
     match /users/{userId}/userlists/{wikidataId} {
       allow get: if isOwner(userId) && isValidId(userId) && isValidId(wikidataId);
-      allow list: if isOwner(userId) && isValidId(userId) && resource.data.userid == request.auth.uid;
+      allow list: if isOwner(userId) && resource.data.userid == request.auth.uid;
       allow create: if isOwner(userId) &&
                       isValidId(userId) &&
                       isValidId(wikidataId) &&
