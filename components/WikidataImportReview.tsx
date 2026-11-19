@@ -60,8 +60,8 @@ const initialDraft = (item: WikidataPublicDomainProduction) => ({
   duration: item.duration || '',
   genres: item.genres || [],
   themes: item.themes || [],
-  posterUrl: item.posterUrl || '',
-  videoUrl: item.videoUrl || '',
+  posterUrl: '',
+  videoUrl: '',
   trailerUrl: '',
   license: item.licenseLabel || '',
   identifiers: {
@@ -153,9 +153,10 @@ export const WikidataImportReview: React.FC<Props> = ({ item, existingMovie, onC
   };
 
   const useMediaAsVideo = (candidate: ImportMediaCandidate) => {
-    setDraft((current: any) => ({ ...current, videoUrl: candidate.url }));
-    setSelectedFields((current) => new Set(current).add('videoUrl'));
-    setSourceByField((current) => ({ ...current, videoUrl: { source: candidate.source, url: candidate.page_url || candidate.url } }));
+    const field: ImportField = candidate.media_type === 'trailer' ? 'trailerUrl' : 'videoUrl';
+    setDraft((current: any) => ({ ...current, [field]: candidate.url }));
+    setSelectedFields((current) => new Set(current).add(field));
+    setSourceByField((current) => ({ ...current, [field]: { source: candidate.source, url: candidate.page_url || candidate.url } }));
     setSelectedMedia((current) => new Set(current).add(candidate.id));
   };
 
@@ -298,7 +299,8 @@ export const WikidataImportReview: React.FC<Props> = ({ item, existingMovie, onC
                   <div className="small text-secondary mt-1">Licença: {candidate.license || 'Não informada — verificar antes de publicar'}</div>
                   {candidate.attribution && <div className="small text-secondary">Crédito: {candidate.attribution}</div>}
                   {(candidate.media_type === 'poster' || candidate.media_type === 'still') ? <button className="btn btn-sm btn-outline-light mt-2" onClick={() => useMediaAsPoster(candidate)}>Usar como pôster principal</button> : null}
-                  {(candidate.media_type === 'video' || candidate.media_type === 'trailer') ? <button className="btn btn-sm btn-outline-light mt-2" onClick={() => useMediaAsVideo(candidate)}>Usar como vídeo principal</button> : null}
+                  {candidate.media_type === 'video' ? <button className="btn btn-sm btn-outline-light mt-2" onClick={() => useMediaAsVideo(candidate)}>Usar como vídeo principal</button> : null}
+                  {candidate.media_type === 'trailer' ? <button className="btn btn-sm btn-outline-light mt-2" onClick={() => useMediaAsVideo(candidate)}>Usar como trailer</button> : null}
                 </div>
               </div>
             ))}
