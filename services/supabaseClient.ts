@@ -402,6 +402,17 @@ export const persistWikidataProduction = async (input: PersistWikidataProduction
         p_media: input.media || [],
     });
     if (error) {
+        try {
+            const { error: auditError } = await supabase.rpc('classicflix_log_import_failure', {
+                p_qid: qid,
+                p_action: input.action,
+                p_error: error.message || 'Falha ao gravar a importação e seu histórico.',
+                p_selected_fields: input.selectedFields,
+            });
+            if (auditError) console.warn('Não foi possível registrar a falha no histórico:', auditError.message);
+        } catch (auditError) {
+            console.warn('Não foi possível registrar a falha no histórico:', auditError);
+        }
         console.error('Falha na importação/revisão Wikidata:', error);
         throw new Error(error.message || 'Falha ao gravar a importação e seu histórico.');
     }
