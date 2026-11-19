@@ -1545,9 +1545,20 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                                 <summary className="small" style={{ cursor: 'pointer' }}>
                                   <strong>{job.details?.wikidataid || 'QID não informado'}</strong>
                                   <span className="text-secondary"> · {job.action === 'insert' ? 'Nova produção' : 'Atualização seletiva'} · {job.created_at ? new Date(job.created_at).toLocaleString('pt-BR') : ''}</span>
-                                  <span className="badge bg-success ms-2">{job.status}</span>
+                                  <span className={`badge ${job.status === "failed" ? "bg-danger" : "bg-success"} ms-2`}>{job.status}</span>
                                 </summary>
                                 <div className="small text-secondary mt-2">Responsável: {job.requested_email || '—'} · Origem: {job.source || 'Wikidata'}</div>
+                                {job.details?.error && <div className="small text-danger mt-1">Erro: {job.details.error}</div>}
+                                {(job.media || []).length > 0 && (
+                                  <div className="small mt-2">
+                                    <strong>Materiais associados:</strong>
+                                    {(job.media || []).map((media: any, index: number) => (
+                                      <div key={job.id + '-media-' + index} className="text-secondary">
+                                        {media.source} · {media.media_type} · {media.license || 'licença não informada'} · <a href={media.page_url || media.url} target="_blank" rel="noreferrer" className="text-info">Abrir material</a>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
                                 {(job.changes || []).length === 0 ? (
                                   <div className="small text-secondary mt-1">Execução sem alterações de campos (pode conter apenas mídias relacionadas).</div>
                                 ) : (
