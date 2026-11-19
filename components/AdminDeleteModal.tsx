@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import { Movie, AppLanguage } from '../types';
 import { APP_TRANSLATIONS } from '../constants';
-import { addSupabaseMovie, deleteSupabaseMovies, getWikidataImportHistory } from '../services/supabaseClient';
+import { deleteSupabaseMovies, getWikidataImportHistory } from '../services/supabaseClient';
 import { WikidataImportReview } from './WikidataImportReview';
 import { translateWikidataMetadata } from '../services/translateService';
 import {
@@ -442,45 +442,33 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
     }
   };
 
-  const handleImportSeries = async (item: WikidataPublicDomainTvSeries) => {
-    setImportingQid(item.wikidataId);
-    setStatusMessage(null);
-    try {
-      const [{ posterUrl, driveNote, warningNote }, translatedMeta] = await Promise.all([
-        resolvePosterUrlForImport(item.wikidataId, item.posterUrl),
-        translateWikidataMetadata({ title: item.title, to: 'pt' }).catch(() => null),
-      ]);
-
-      await addSupabaseMovie({
-        wikidataId: item.wikidataId,
-        title: item.title,
-        titlePt: translatedMeta?.titlePt || undefined,
-        originalTitle: item.titleP1476 || item.title,
-        description: item.description,
-        descriptionEn: item.description,
-        year: item.year || 1950,
-        director: item.director || 'Unknown',
-        language: item.language || 'English',
-        posterUrl,
-        videoUrl: item.videoUrl,
-        type: 'television series',
-        genres: ['Television Series'],
-        license: 'Public Domain (Q19652)',
-      });
-      const extraNote = [driveNote, warningNote].filter(Boolean).join(' ');
-      setStatusMessage({
-        type: warningNote ? 'info' : 'success',
-        text: `Série "${item.title}" (${item.wikidataId}) importada para o catálogo.${extraNote ? ' ' + extraNote : ''}`,
-      });
-      onRefresh();
-    } catch (err: any) {
-      setStatusMessage({
-        type: 'danger',
-        text: `Erro ao importar ${item.wikidataId}: ${err?.message || String(err)}`,
-      });
-    } finally {
-      setImportingQid(null);
-    }
+  const handleImportSeries = (item: WikidataPublicDomainTvSeries) => {
+    const reviewItem: WikidataPublicDomainProduction = {
+      wikidataId: item.wikidataId,
+      originalTitle: item.titleP1476 || item.title,
+      wikidataLabel: item.title,
+      hasP1476: item.hasP1476,
+      instanceQid: 'Q5398426',
+      instanceLabel: 'television series',
+      supabaseType: 'television series',
+      isDocumentary: false,
+      language: item.language || 'Não informado',
+      year: item.year || 0,
+      description: item.description || '',
+      descriptionEn: item.description || '',
+      descriptionPt: '',
+      director: item.director || '',
+      duration: '',
+      genres: ['Television Series'],
+      themes: [],
+      licenseLabel: 'Public Domain (Q19652)',
+      posterUrl: item.posterUrl || '',
+      videoUrl: '',
+      hasVideo: item.hasVideo,
+      archiveId: '',
+      youtubeId: '',
+    };
+    setReviewingPdItem(reviewItem);
   };
 
   const handleCopySparql = async () => {
