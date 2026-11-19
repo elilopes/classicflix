@@ -681,27 +681,26 @@ export const upsertIdentifiers = async (wikidataId: string, ids: {
     youtubeId?: string;
     commons?: string;
 }) => {
-    try {
-        const supabase = await getSupabase();
-        if (!supabase) return;
-        
-        const { error } = await supabase.from('identifiers').upsert([{
-            wikidataid: wikidataId,
-            archiveid: ids.archiveId || null,
-            imdbid: ids.imdbId || null,
-            googleknowid: ids.googleKnowId || null,
-            ofdbid: ids.ofdbId || null,
-            openmdbid: ids.openMdbId || null,
-            youtube: ids.youtubeId || null,
-            commons: ids.commons || null,
-            updatedat: new Date().toISOString(),
-        }], { onConflict: 'wikidataid' });
+    const supabase = await getSupabase();
+    if (!supabase) {
+        throw new Error('Supabase indisponível. Os identificadores não foram salvos.');
+    }
 
-        if (error) {
-            console.warn("Aviso ao salvar identifiers (RLS/DB):", error.message);
-        }
-    } catch (e) {
-        console.warn("Aviso ao salvar identifiers:", e);
+    const { error } = await supabase.from('identifiers').upsert([{
+        wikidataid: wikidataId,
+        archiveid: ids.archiveId || null,
+        imdbid: ids.imdbId || null,
+        googleknowid: ids.googleKnowId || null,
+        ofdbid: ids.ofdbId || null,
+        openmdbid: ids.openMdbId || null,
+        youtube: ids.youtubeId || null,
+        commons: ids.commons || null,
+        updatedat: new Date().toISOString(),
+    }], { onConflict: 'wikidataid' });
+
+    if (error) {
+        console.error('Erro ao salvar identifiers:', error);
+        throw new Error(`Falha ao salvar identificadores de ${wikidataId}: ${error.message}`);
     }
 };
 
