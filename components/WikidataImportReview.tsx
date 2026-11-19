@@ -258,6 +258,7 @@ export const WikidataImportReview: React.FC<Props> = ({ item, existingMovie, onC
             {!loadingSources && <button className="btn btn-sm btn-outline-secondary" onClick={() => { setEnrichment(null); setLoadingSources(true); loadWikidataEnrichment(item).then(setEnrichment).catch((e:any)=>setError(e.message)).finally(()=>setLoadingSources(false)); }}><RefreshCw size={13}/> Reconsultar</button>}
           </div>
 
+          <div className="small text-secondary mb-2">YouTube utiliza o vídeo vinculado no Wikidata (P1651); não é feita busca genérica por título. Todos os resultados externos precisam ser aprovados antes de entrar na ficha.</div>
           {enrichment?.warnings.map((warning) => <div key={warning} className="small text-warning">{warning}</div>)}
 
           {enrichment?.tmdb.length ? (
