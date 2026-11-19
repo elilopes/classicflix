@@ -223,38 +223,36 @@ const formatAwardsForDb = (awards: unknown): string | null => {
 };
 
 // Fix: Implement addSupabaseMovie to persist new movies directly to movies, description, and technicaldetails
-export const addSupabaseMovie = async (movie: Partial<Movie> & { descriptionEn?: string }) => {
+export const addSupabaseMovie = async (
+    movie: Partial<Movie> & {
+        descriptionEn?: string;
+        identifiers?: Movie['identifiers'] & { youtubeId?: string };
+    }
+) => {
     const supabase = await getSupabase();
-    if (!supabase) return;
-
-    const isIndie = movie.genres?.includes('Independente') || movie.isIndependent;
-    const prefix = isIndie ? 'indie' : 'manual';
-    const finalWikidataId = movie.wikidataId || `${prefix}${Math.floor(Math.random() * 100000000)}`;
-
-    if (!finalWikidataId) {
-        throw new Error("Cannot add movie: missing wikidataId");
+    if (!supabase) {
+        throw new Error('Supabase indisponível. A produção não foi importada.');
     }
 
-    const { data: existingMovie } = await supabase
-        .from('movies')
-        .select('id')
-        .eq('wikidataid', finalWikidataId)
-        .maybeSingle();
+    const wikidataId = movie.wikidataId?.trim();
+    if (!wikidataId) {
+        throw new Error('Não foi possível importar a produção: QID do Wikidata ausente.');
+    }
 
     const providedId = typeof movie.id === 'string' ? movie.id.trim() : '';
-    const finalId = providedId || existingMovie?.id || generateMovieRowId();
-    const finalTitle = movie.title || movie.originalTitle || finalWikidataId;
+    const finalId = providedId || generateMovieRowId();
+    const finalTitle = movie.title || movie.originalTitle || wikidataId;
     const englishDescription = movie.descriptionEn || movie.description || null;
 
-    const { error: movieError } = await supabase.from('movies').upsert([{
+    const movieRow = {
         id: finalId,
-        wikidataid: finalWikidataId,
+        wikidataid: wikidataId,
         title: finalTitle,
         titlept: movie.titlePt || null,
         originaltitle: movie.originalTitle || null,
         year: movie.year ?? null,
         language: movie.language || null,
-        hassubtitles: Boolean(movie.hasSubtitles),
+        hassubtitles: movie.hasSubtitles ?? null,
         posterurl: movie.posterUrl || null,
         videourl: movie.videoUrl || null,
         trailerurl: movie.trailerUrl || null,
@@ -262,55 +260,57 @@ export const addSupabaseMovie = async (movie: Partial<Movie> & { descriptionEn?:
         description: englishDescription,
         type: movie.type || 'film',
         awards: formatAwardsForDb(movie.awards),
-        popularity: movie.popularity ?? 0,
-    }], { onConflict: 'wikidataid' });
+        popularity: movie.popularity ?? null,
+    };
 
-    if (movieError) {
-        console.error("Supabase Insert Error (movies):", movieError);
-        throw movieError;
+    const descriptionRow = {
+        id: finalId,
+        title: finalTitle,
+        descriptionen: englishDescription,
+        descriptionpt: movie.descriptionPt || null,
+        descriptionhi: movie.descriptionHi || null,
+        descriptionru: movie.descriptionRu || null,
+        descriptionit: movie.descriptionIt || null,
+    };
+
+    const technicalDetailsRow = {
+        id: finalId,
+        title: finalTitle,
+        duration: movie.duration || null,
+        genres: toCsvText(movie.genres),
+        director: movie.director && movie.director !== 'Unknown' ? movie.director : null,
+        sourcelabel: movie.sourceLabel || movie.license || null,
+        castmembers: toCsvText(movie.cast),
+        cinematographers: toCsvText(movie.cinematographers),
+        composers: toCsvText(movie.composers),
+        themes: toCsvText(movie.themes),
+        rating: movie.rating || null,
+    };
+
+    const identifiersRow = {
+        archiveid: movie.identifiers?.archiveId || null,
+        imdbid: movie.identifiers?.imdbId || null,
+        omdbid: movie.identifiers?.omdbId || null,
+        openmdbid: movie.identifiers?.openMdbId || null,
+        googleknowid: movie.identifiers?.googleKnowId || null,
+        ofdbid: movie.identifiers?.ofdbId || null,
+        commons: movie.identifiers?.wikimediaCommons || null,
+        youtube: movie.identifiers?.youtubeId || null,
+    };
+
+    const { error } = await supabase.rpc('classicflix_import_movie_atomic', {
+        p_movie: movieRow,
+        p_description: descriptionRow,
+        p_technicaldetails: technicalDetailsRow,
+        p_identifiers: identifiersRow,
+    });
+
+    if (error) {
+        console.error('Falha na importação atômica do ClassicFlix:', error);
+        throw new Error(`Falha ao gravar a produção ${wikidataId}: ${error.message}`);
     }
 
-    // Persist auxiliary description record using wikidataid as relationship key
-    try {
-        const { error: descError } = await supabase.from('description').upsert([{
-            wikidataid: finalWikidataId,
-            id: finalId,
-            title: finalTitle,
-            descriptionen: englishDescription,
-            descriptionpt: movie.descriptionPt || null,
-            descriptionhi: movie.descriptionHi || null,
-            descriptionru: movie.descriptionRu || null,
-            descriptionit: movie.descriptionIt || null,
-        }], { onConflict: 'wikidataid' });
-        if (descError) {
-            console.warn("Aviso ao salvar tabela description:", descError.message);
-        }
-    } catch (descErr) {
-        console.warn("Aviso ao salvar tabela description:", descErr);
-    }
-
-    // Persist auxiliary technicaldetails record using wikidataid as relationship key
-    try {
-        const { error: techError } = await supabase.from('technicaldetails').upsert([{
-            wikidataid: finalWikidataId,
-            id: finalId,
-            title: finalTitle,
-            duration: movie.duration || null,
-            genres: toCsvText(movie.genres),
-            director: movie.director && movie.director !== 'Unknown' ? movie.director : null,
-            sourcelabel: movie.sourceLabel || movie.license || null,
-            castmembers: toCsvText(movie.cast),
-            cinematographers: toCsvText(movie.cinematographers),
-            composers: toCsvText(movie.composers),
-            themes: toCsvText(movie.themes),
-            rating: movie.rating || null,
-        }], { onConflict: 'wikidataid' });
-        if (techError) {
-            console.warn("Aviso ao salvar tabela technicaldetails:", techError.message);
-        }
-    } catch (techErr) {
-        console.warn("Aviso ao salvar tabela technicaldetails:", techErr);
-    }
+    return { wikidataId, id: finalId, success: true };
 };
 
 // Fix: Implement updateSupabaseMovie to update movies, description, and technicaldetails directly
