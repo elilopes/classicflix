@@ -205,7 +205,7 @@ END;
 $policies$;
 
 -- A função de importação é instalada pela migration
--- supabase/migrations/20261119000100_atomic_wikidata_movie_import.sql.
+-- supabase/migrations/20261119210000_atomic_wikidata_movie_import.sql.
 
 
 -- 12. RPC atômica usada pelo importador Wikidata.
