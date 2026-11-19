@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { Movie, AppLanguage } from '../types';
 import { APP_TRANSLATIONS } from '../constants';
-import { addSupabaseMovie, deleteSupabaseMovies, upsertIdentifiers } from '../services/supabaseClient';
+import { addSupabaseMovie, deleteSupabaseMovies } from '../services/supabaseClient';
 import { translateWikidataMetadata } from '../services/translateService';
 import {
   connectGoogleDrive,
@@ -658,15 +658,14 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
         genres,
         themes,
         license: item.licenseLabel || 'Public Domain (Q19652)',
-      });
-
-      await upsertIdentifiers(item.wikidataId, {
-        archiveId: item.archiveId,
-        imdbId: item.imdbId,
-        googleKnowId: item.googleKnowId,
-        ofdbId: item.ofdbId,
-        youtubeId: item.youtubeId,
-        commons: item.commons,
+        identifiers: {
+          archiveId: item.archiveId,
+          imdbId: item.imdbId,
+          googleKnowId: item.googleKnowId,
+          ofdbId: item.ofdbId,
+          youtubeId: item.youtubeId,
+          wikimediaCommons: item.commons,
+        },
       });
 
       const hints: string[] = [];
