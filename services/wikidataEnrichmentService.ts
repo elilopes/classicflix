@@ -23,6 +23,7 @@ export interface TmdbMetadataCandidate {
   posterUrl: string;
   director: string;
   genres: string[];
+  cast: string[];
   duration: string;
   rating: string;
   imdbId: string;
@@ -262,6 +263,7 @@ const mapTmdbCandidate = (id: string, details: any, isTv = false): TmdbMetadataC
   posterUrl: clean(details.posterUrl),
   director: clean(details.director) === 'Unknown' ? '' : clean(details.director),
   genres: Array.isArray(details.genres) ? details.genres : [],
+  cast: Array.isArray(details.cast) ? details.cast : [],
   duration: clean(details.duration),
   rating: clean(details.rating),
   imdbId: clean(details.wikidataId),
