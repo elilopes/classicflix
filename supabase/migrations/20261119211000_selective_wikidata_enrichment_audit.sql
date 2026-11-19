@@ -290,3 +290,48 @@ $function$;
 
 REVOKE ALL ON FUNCTION public.classicflix_import_movie_with_history(text,jsonb,jsonb,jsonb,jsonb,text[],jsonb,jsonb) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.classicflix_import_movie_with_history(text,jsonb,jsonb,jsonb,jsonb,text[],jsonb,jsonb) TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.classicflix_get_import_history(p_limit integer DEFAULT 50)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $function$
+DECLARE v_result jsonb;
+BEGIN
+  IF auth.uid() IS NULL OR COALESCE(auth.jwt() ->> 'email','') <> 'liclopes@gmail.com' THEN
+    RAISE EXCEPTION 'Apenas o administrador do ClassicFlix pode consultar o histórico.' USING ERRCODE = '42501';
+  END IF;
+  SELECT COALESCE(jsonb_agg(entry ORDER BY created_at DESC), '[]'::jsonb)
+  INTO v_result
+  FROM (
+    SELECT j.created_at,
+      jsonb_build_object(
+        'id', j.id,
+        'source', j.source,
+        'action', j.action,
+        'status', j.status,
+        'requested_email', j.requested_email,
+        'created_at', j.created_at,
+        'details', j.details,
+        'changes', COALESCE((
+          SELECT jsonb_agg(jsonb_build_object(
+            'field_name', h.field_name,
+            'old_value', h.old_value,
+            'new_value', h.new_value,
+            'source', h.source,
+            'source_url', h.source_url,
+            'created_at', h.created_at
+          ) ORDER BY h.id)
+          FROM public.metadata_history h WHERE h.import_job_id = j.id
+        ), '[]'::jsonb)
+      ) AS entry
+    FROM public.import_jobs j
+    ORDER BY j.created_at DESC
+    LIMIT GREATEST(1, LEAST(COALESCE(p_limit, 50), 200))
+  ) entries;
+  RETURN v_result;
+END;
+$function$;
+REVOKE ALL ON FUNCTION public.classicflix_get_import_history(integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.classicflix_get_import_history(integer) TO authenticated;
