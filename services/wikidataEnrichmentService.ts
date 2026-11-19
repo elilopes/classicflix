@@ -19,7 +19,7 @@ export interface TmdbMetadataCandidate {
   title: string;
   originalTitle: string;
   year: number;
-  overview: string;
+  overviewPt: string;
   posterUrl: string;
   director: string;
   genres: string[];
@@ -259,7 +259,7 @@ const mapTmdbCandidate = (id: string, details: any, isTv = false): TmdbMetadataC
   title: clean(details.title),
   originalTitle: clean(details.originalTitle),
   year: Number(details.year) || 0,
-  overview: clean(details.description),
+  overviewPt: clean(details.description),
   posterUrl: clean(details.posterUrl),
   director: clean(details.director) === 'Unknown' ? '' : clean(details.director),
   genres: Array.isArray(details.genres) ? details.genres : [],
