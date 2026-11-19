@@ -340,7 +340,7 @@ export const persistWikidataProduction = async (input: PersistWikidataProduction
 
     const draft = input.draft || {};
     const movieRow = {
-        id: `wd-${qid.toLowerCase()}`,
+        id: generateMovieRowId(),
         wikidataid: qid,
         title: draft.title || draft.originalTitle || qid,
         titlept: draft.titlePt || null,
