@@ -20,10 +20,12 @@ import {
   HardDrive,
   LogOut,
   Languages,
+  History,
 } from 'lucide-react';
 import { Movie, AppLanguage } from '../types';
 import { APP_TRANSLATIONS } from '../constants';
-import { addSupabaseMovie, deleteSupabaseMovies } from '../services/supabaseClient';
+import { addSupabaseMovie, deleteSupabaseMovies, getWikidataImportHistory } from '../services/supabaseClient';
+import { WikidataImportReview } from './WikidataImportReview';
 import { translateWikidataMetadata } from '../services/translateService';
 import {
   connectGoogleDrive,
@@ -111,6 +113,10 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
   const [showPdSparqlScript, setShowPdSparqlScript] = useState(false);
   const [copiedPdSparql, setCopiedPdSparql] = useState(false);
   const [isTranslatingPdList, setIsTranslatingPdList] = useState(false);
+  const [reviewingPdItem, setReviewingPdItem] = useState<WikidataPublicDomainProduction | null>(null);
+  const [showImportHistory, setShowImportHistory] = useState(false);
+  const [importHistory, setImportHistory] = useState<any[]>([]);
+  const [isLoadingImportHistory, setIsLoadingImportHistory] = useState(false);
 
   // --- Google Drive Poster Upload ({qid}.webp) ---
   const [driveConnected, setDriveConnected] = useState<boolean>(() => Boolean(getGoogleDriveAccessToken()));
@@ -599,94 +605,21 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
     }
   };
 
-  const handleImportPdProduction = async (item: WikidataPublicDomainProduction) => {
-    setImportingQid(item.wikidataId);
+  const handleLoadImportHistory = async () => {
+    if (showImportHistory) {
+      setShowImportHistory(false);
+      return;
+    }
+    setIsLoadingImportHistory(true);
     setStatusMessage(null);
     try {
-      const type = item.supabaseType || item.instanceLabel || 'film';
-      const rawGenres =
-        item.genres && item.genres.length > 0
-          ? item.genres
-          : item.isDocumentary
-            ? ['Documentary']
-            : item.instanceQid === 'Q5398426'
-              ? ['Television Series']
-              : item.instanceQid === 'Q17517379'
-                ? ['Animation', 'Short']
-                : ['Classic'];
-      const rawThemes = item.themes && item.themes.length > 0 ? item.themes : undefined;
-
-      const [{ posterUrl, driveNote, warningNote }, translatedMeta] = await Promise.all([
-        resolvePosterUrlForImport(item.wikidataId, item.posterUrl),
-        translateWikidataMetadata({
-          title: item.titlePt ? undefined : item.originalTitle,
-          label: item.wikidataLabel,
-          genres: rawGenres,
-          themes: rawThemes,
-          to: 'pt',
-        }).catch(() => null),
-      ]);
-
-      const resolvedTitlePt =
-        item.titlePt || translatedMeta?.titlePt || translatedMeta?.labelPt || undefined;
-      const genres =
-        translatedMeta?.genresPt && translatedMeta.genresPt.length > 0
-          ? translatedMeta.genresPt
-          : rawGenres;
-      const themes =
-        translatedMeta?.themesPt && translatedMeta.themesPt.length > 0
-          ? translatedMeta.themesPt
-          : rawThemes;
-
-      const englishDescription = item.descriptionEn || item.description || '';
-
-      await addSupabaseMovie({
-        wikidataId: item.wikidataId,
-        title: item.originalTitle,
-        titlePt: resolvedTitlePt,
-        originalTitle: item.originalTitle,
-        description: englishDescription,
-        descriptionEn: englishDescription,
-        descriptionPt: item.descriptionPt || undefined,
-        year: item.year || 1950,
-        director: item.director || undefined,
-        duration: item.duration || undefined,
-        language: item.language !== 'Não informado' ? item.language : 'Unknown',
-        posterUrl,
-        videoUrl: item.videoUrl,
-        type,
-        genres,
-        themes,
-        license: item.licenseLabel || 'Public Domain (Q19652)',
-        identifiers: {
-          archiveId: item.archiveId,
-          imdbId: item.imdbId,
-          googleKnowId: item.googleKnowId,
-          ofdbId: item.ofdbId,
-          youtubeId: item.youtubeId,
-          wikimediaCommons: item.commons,
-        },
-      });
-
-      const hints: string[] = [];
-      if (driveNote) hints.push(driveNote);
-      if (warningNote) hints.push(warningNote);
-      if (item.posterUrl && savePosterToDrive && !getGoogleDriveAccessToken()) {
-        hints.push('Dica: conecte o Google Drive acima para enviar a imagem como {qid}.webp automaticamente.');
-      }
-
-      setStatusMessage({
-        type: warningNote ? 'info' : 'success',
-        text: `Produção "${resolvedTitlePt || item.originalTitle}" (${item.wikidataId}) importada para o catálogo.${hints.length ? ' ' + hints.join(' ') : ''}`,
-      });
-      onRefresh();
+      const rows = await getWikidataImportHistory(75);
+      setImportHistory(Array.isArray(rows) ? rows : []);
+      setShowImportHistory(true);
     } catch (err: any) {
-      setStatusMessage({
-        type: 'danger',
-        text: `Erro ao importar ${item.wikidataId}: ${err?.message || String(err)}`,
-      });
+      setStatusMessage({ type: 'danger', text: `Falha ao consultar histórico: ${err?.message || String(err)}` });
     } finally {
-      setImportingQid(null);
+      setIsLoadingImportHistory(false);
     }
   };
 
@@ -1581,11 +1514,64 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                           )}
                           <span>Traduzir Títulos/Labels (PT)</span>
                         </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-warning d-inline-flex align-items-center gap-1"
+                          onClick={handleLoadImportHistory}
+                          disabled={isLoadingImportHistory}
+                        >
+                          {isLoadingImportHistory ? <Loader2 size={13} className="animate-spin" /> : <History size={13} />}
+                          <span>{showImportHistory ? 'Ocultar histórico' : 'Histórico de importações'}</span>
+                        </button>
                         <span className="badge bg-secondary">
                           {filteredPdProductions.length} {t.adminPdProductionsCount || 'produção(ões)'}
                         </span>
                       </div>
                     </div>
+
+                    {showImportHistory && (
+                      <div className="border border-secondary rounded p-3 mb-3">
+                        <div className="d-flex justify-content-between align-items-center mb-2">
+                          <strong className="text-warning">Histórico detalhado de importações</strong>
+                          <span className="small text-secondary">{importHistory.length} execução(ões)</span>
+                        </div>
+                        {importHistory.length === 0 ? (
+                          <div className="small text-secondary">Nenhuma importação registrada ainda.</div>
+                        ) : (
+                          <div className="d-flex flex-column gap-2">
+                            {importHistory.map((job) => (
+                              <details key={job.id} className="border border-secondary rounded p-2">
+                                <summary className="small" style={{ cursor: 'pointer' }}>
+                                  <strong>{job.details?.wikidataid || 'QID não informado'}</strong>
+                                  <span className="text-secondary"> · {job.action === 'insert' ? 'Nova produção' : 'Atualização seletiva'} · {job.created_at ? new Date(job.created_at).toLocaleString('pt-BR') : ''}</span>
+                                  <span className="badge bg-success ms-2">{job.status}</span>
+                                </summary>
+                                <div className="small text-secondary mt-2">Responsável: {job.requested_email || '—'} · Origem: {job.source || 'Wikidata'}</div>
+                                {(job.changes || []).length === 0 ? (
+                                  <div className="small text-secondary mt-1">Execução sem alterações de campos (pode conter apenas mídias relacionadas).</div>
+                                ) : (
+                                  <div className="table-responsive mt-2">
+                                    <table className="table table-dark table-sm mb-0">
+                                      <thead><tr><th>Campo</th><th>Valor anterior</th><th>Novo valor</th><th>Fonte</th></tr></thead>
+                                      <tbody>
+                                        {(job.changes || []).map((change: any, index: number) => (
+                                          <tr key={`${job.id}-${index}`}>
+                                            <td>{change.field_name}</td>
+                                            <td className="text-secondary text-break">{JSON.stringify(change.old_value ?? null)}</td>
+                                            <td className="text-break">{JSON.stringify(change.new_value ?? null)}</td>
+                                            <td>{change.source_url ? <a href={change.source_url} target="_blank" rel="noreferrer" className="text-info">{change.source} <ExternalLink size={10}/></a> : change.source}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                )}
+                              </details>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     <div className="table-responsive custom-scrollbar" style={{ maxHeight: '420px' }}>
                       <table className="table table-dark table-sm table-hover align-middle border-secondary mb-0">
@@ -1664,25 +1650,18 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                                   <td className="small text-white-50">{item.language}</td>
                                   <td className="small text-white-50">{item.year || '—'}</td>
                                   <td className="small">
-                                    {alreadyExists ? (
-                                      <span className="badge bg-success">
-                                        {t.adminPdAlreadyRegistered || 'Já cadastrado'}
-                                      </span>
-                                    ) : (
+                                    <div className="d-flex flex-column align-items-start gap-1">
+                                      {alreadyExists && <span className="badge bg-success">{t.adminPdAlreadyRegistered || 'Já cadastrado'}</span>}
                                       <button
                                         type="button"
-                                        className="btn btn-sm btn-outline-success py-0 px-2 d-inline-flex align-items-center gap-1"
-                                        onClick={() => handleImportPdProduction(item)}
+                                        className={`btn btn-sm py-0 px-2 d-inline-flex align-items-center gap-1 ${alreadyExists ? 'btn-outline-info' : 'btn-outline-success'}`}
+                                        onClick={() => setReviewingPdItem(item)}
                                         disabled={importingQid === item.wikidataId}
                                       >
-                                        {importingQid === item.wikidataId ? (
-                                          <Loader2 size={12} className="animate-spin" />
-                                        ) : (
-                                          <PlusCircle size={12} />
-                                        )}
-                                        <span>{t.adminPdImport || 'Importar'}</span>
+                                        {alreadyExists ? <RefreshCw size={12}/> : <PlusCircle size={12}/>}
+                                        <span>{alreadyExists ? 'Revisar atualização' : (t.adminPdImport || 'Importar')}</span>
                                       </button>
-                                    )}
+                                    </div>
                                   </td>
                                 </tr>
                               );
@@ -1748,6 +1727,14 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
           </div>
         </div>
       </div>
+    {reviewingPdItem && (
+      <WikidataImportReview
+        item={reviewingPdItem}
+        existingMovie={movies.find((movie) => movie.wikidataId?.trim().toUpperCase() === reviewingPdItem.wikidataId.toUpperCase())}
+        onClose={() => setReviewingPdItem(null)}
+        onSaved={() => { setReviewingPdItem(null); onRefresh(); }}
+      />
+    )}
     </div>
   );
 };
