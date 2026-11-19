@@ -738,6 +738,7 @@ export interface WikidataPublicDomainProduction {
     youtubeId?: string;
     commons?: string;
     tmdbId?: string;
+    tmdbType?: 'movie' | 'tv';
 }
 
 export interface PublicDomainSearchOptions {
@@ -1006,6 +1007,7 @@ export const searchPublicDomainProductionsInWikidata = async (
                 youtubeId,
                 commons,
                 tmdbId,
+                tmdbType: b.tmdbTv?.value ? 'tv' : (b.tmdbMovie?.value ? 'movie' : undefined),
             };
         })
         .filter(Boolean) as WikidataPublicDomainProduction[];
