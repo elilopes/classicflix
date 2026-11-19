@@ -313,6 +313,109 @@ export const addSupabaseMovie = async (
     return { wikidataId, id: finalId, success: true };
 };
 
+export interface PersistWikidataProductionInput {
+    action: 'insert' | 'update';
+    item: { wikidataId: string; supabaseType?: string; instanceLabel?: string };
+    draft: any;
+    selectedFields: string[];
+    sources: Record<string, { source: string; url: string }>;
+    media: Array<{
+        media_type: string;
+        source: string;
+        source_id: string;
+        url: string;
+        page_url?: string;
+        license?: string;
+        attribution?: string;
+        metadata?: Record<string, unknown>;
+    }>;
+}
+
+export const persistWikidataProduction = async (input: PersistWikidataProductionInput) => {
+    const supabase = await getSupabase();
+    if (!supabase) throw new Error('Supabase indisponível. Nenhuma alteração foi gravada.');
+
+    const qid = input.item.wikidataId?.trim().toUpperCase();
+    if (!qid || !/^Q\\d+$/.test(qid)) throw new Error('QID do Wikidata inválido.');
+
+    const draft = input.draft || {};
+    const movieRow = {
+        id: `wd-${qid.toLowerCase()}`,
+        wikidataid: qid,
+        title: draft.title || draft.originalTitle || qid,
+        titlept: draft.titlePt || null,
+        originaltitle: draft.originalTitle || null,
+        year: Number(draft.year) > 0 ? Number(draft.year) : null,
+        language: draft.language || null,
+        hassubtitles: false,
+        posterurl: draft.posterUrl || null,
+        videourl: draft.videoUrl || null,
+        trailerurl: draft.trailerUrl || null,
+        subtitleurl: null,
+        description: draft.descriptionEn || null,
+        type: input.item.supabaseType || input.item.instanceLabel || 'film',
+        awards: null,
+        popularity: 0,
+    };
+    const descriptionRow = {
+        id: movieRow.id,
+        title: movieRow.title,
+        descriptionen: draft.descriptionEn || null,
+        descriptionpt: draft.descriptionPt || null,
+        descriptionhi: null,
+        descriptionru: null,
+        descriptionit: null,
+    };
+    const technicalRow = {
+        id: movieRow.id,
+        title: movieRow.title,
+        duration: draft.duration || null,
+        genres: toCsvText(draft.genres),
+        director: draft.director || null,
+        sourcelabel: draft.license || null,
+        castmembers: null,
+        cinematographers: null,
+        composers: null,
+        themes: toCsvText(draft.themes),
+        rating: null,
+    };
+    const identifiers = {
+        archiveid: draft.identifiers?.archiveId || null,
+        imdbid: draft.identifiers?.imdbId || null,
+        omdbid: null,
+        openmdbid: null,
+        googleknowid: draft.identifiers?.googleKnowId || null,
+        ofdbid: draft.identifiers?.ofdbId || null,
+        commons: draft.identifiers?.wikimediaCommons || null,
+        youtube: draft.identifiers?.youtubeId || null,
+        tmdbid: draft.identifiers?.tmdbId || null,
+    };
+
+    const { data, error } = await supabase.rpc('classicflix_import_movie_with_history', {
+        p_action: input.action,
+        p_movie: movieRow,
+        p_description: descriptionRow,
+        p_technicaldetails: technicalRow,
+        p_identifiers: identifiers,
+        p_selected_fields: input.selectedFields,
+        p_sources: input.sources || {},
+        p_media: input.media || [],
+    });
+    if (error) {
+        console.error('Falha na importação/revisão Wikidata:', error);
+        throw new Error(error.message || 'Falha ao gravar a importação e seu histórico.');
+    }
+    return data as string;
+};
+
+export const getWikidataImportHistory = async (limit = 50) => {
+    const supabase = await getSupabase();
+    if (!supabase) throw new Error('Supabase indisponível para consultar o histórico.');
+    const { data, error } = await supabase.rpc('classicflix_get_import_history', { p_limit: limit });
+    if (error) throw new Error(error.message || 'Falha ao consultar histórico de importações.');
+    return data || [];
+};
+
 // Fix: Implement updateSupabaseMovie to update movies, description, and technicaldetails directly
 export const updateSupabaseMovie = async (wikidataId: string, updates: any) => {
     const supabase = await getSupabase();
