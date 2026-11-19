@@ -2,6 +2,7 @@
  * OAuth 2.1 Specification Implementation with PKCE (Proof Key for Code Exchange - RFC 7636)
  * Supports Google Identity & Connected Apps Platform
  */
+import firebaseConfig from '../firebase-applet-config.json';
 
 export interface OAuth21Config {
     clientId: string;
@@ -33,7 +34,7 @@ const STATE_KEY = 'classicflix_oauth21_state';
 
 // Google OAuth 2.1 Default Configuration
 export const DEFAULT_OAUTH21_CONFIG: OAuth21Config = {
-    clientId: import.meta.env.VITE_GOOGLE_CLIENT_ID || '18401513977-connected-apps.apps.googleusercontent.com',
+    clientId: import.meta.env.VITE_GOOGLE_CLIENT_ID || firebaseConfig.oAuthClientId || '981795669454-vq0fh4h5g8969sh2lq0uifqmn8ber4r9.apps.googleusercontent.com',
     authEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
     tokenEndpoint: 'https://oauth2.googleapis.com/token',
     redirectUri: typeof window !== 'undefined' ? `${window.location.origin}/oauth2/callback` : '',

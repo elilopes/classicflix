@@ -1,5 +1,23 @@
 import { Movie } from "../types";
 
+const getClientEnv = (viteKey: string, nodeKey?: string): string => {
+  try {
+    // @ts-ignore
+    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[viteKey]) {
+      // @ts-ignore
+      return import.meta.env[viteKey];
+    }
+    // @ts-ignore
+    if (typeof process !== 'undefined' && process.env) {
+      // @ts-ignore
+      return process.env[nodeKey || viteKey] || '';
+    }
+  } catch {
+    // ignore env lookup failure
+  }
+  return '';
+};
+
 export interface QuizQuestion {
   question: string;
   options: string[];
@@ -34,67 +52,48 @@ async function postGeminiJson<T>(endpoint: string, payload: unknown): Promise<T>
 }
 
 export const extractMetadataFromUrl = async (url: string): Promise<Partial<Movie>> => {
-  try {
-    return await postGeminiJson<Partial<Movie>>('extract-metadata', { url });
-  } catch (error) {
-    console.error("Extraction error:", error);
-    return { title: "New Movie" };
-  }
+  return await postGeminiJson<Partial<Movie>>('extract-metadata', { url });
 };
 
 export const searchCatalogWithAI = async (query: string, availableMovies: Movie[]): Promise<{ matchedIds: string[], reasoning: string }> => {
-  try {
-    const compactMovies = availableMovies.map(m => ({
-      id: m.id,
-      title: m.title,
-      genres: m.genres,
-      year: m.year,
-      description: m.description,
-      language: m.language,
-    }));
-    return await postGeminiJson<{ matchedIds: string[], reasoning: string }>('search-catalog', {
-      query,
-      availableMovies: compactMovies,
-    });
-  } catch (error) {
-    return { matchedIds: [], reasoning: "AI search unavailable." };
-  }
+  const compactMovies = availableMovies.map(m => ({
+    id: m.id,
+    title: m.title,
+    titlePt: m.titlePt,
+    director: m.director,
+    genres: m.genres,
+    themes: m.themes,
+    year: m.year,
+    description: m.description,
+    language: m.language,
+  }));
+  return await postGeminiJson<{ matchedIds: string[], reasoning: string }>('search-catalog', {
+    query,
+    availableMovies: compactMovies,
+  });
 };
 
-export const generateMovieTrivia = async (title: string, year: number): Promise<string[]> => {
-  try {
-    const data = await postGeminiJson<{ trivia: string[] }>('trivia', { title, year });
-    return Array.isArray(data.trivia) ? data.trivia : ["Trivia unavailable."];
-  } catch (e) {
-    return ["Trivia unavailable."];
+export const generateMovieTrivia = async (title: string, year: number, language?: string, wikidataId?: string): Promise<string[]> => {
+  const data = await postGeminiJson<{ trivia: string[] }>('trivia', { title, year, language, wikidataId });
+  if (!Array.isArray(data.trivia)) {
+    throw new Error("Resposta inválida ao gerar curiosidades.");
   }
+  return data.trivia;
 };
 
-export const generateCriticalAnalysis = async (title: string, year: number, language: string): Promise<string> => {
-  try {
-    const data = await postGeminiJson<{ text: string }>('critical-analysis', { title, year, language });
-    return data.text || "Analysis unavailable.";
-  } catch (e) {
-    return "Could not generate analysis.";
-  }
+export const generateCriticalAnalysis = async (title: string, year: number, language: string, wikidataId?: string): Promise<string> => {
+  const data = await postGeminiJson<{ text: string }>('critical-analysis', { title, year, language, wikidataId });
+  return data.text || "Analysis unavailable.";
 };
 
-export const generateCriticsSummary = async (title: string, year: number, language: string): Promise<string> => {
-  try {
-    const data = await postGeminiJson<{ text: string }>('critics-summary', { title, year, language });
-    return data.text || "Critics summary unavailable.";
-  } catch (e) {
-    return "Could not fetch critics summary.";
-  }
+export const generateCriticsSummary = async (title: string, year: number, language: string, wikidataId?: string): Promise<string> => {
+  const data = await postGeminiJson<{ text: string }>('critics-summary', { title, year, language, wikidataId });
+  return data.text || "Critics summary unavailable.";
 };
 
-export const generateCinemaHistory = async (title: string, year: number, language: string): Promise<string> => {
-  try {
-    const data = await postGeminiJson<{ text: string }>('cinema-history', { title, year, language });
-    return data.text || "History context unavailable.";
-  } catch (e) {
-    return "Could not generate cinema history.";
-  }
+export const generateCinemaHistory = async (title: string, year: number, language: string, wikidataId?: string): Promise<string> => {
+  const data = await postGeminiJson<{ text: string }>('cinema-history', { title, year, language, wikidataId });
+  return data.text || "History context unavailable.";
 };
 
 export const generateMovieEmojis = async (title: string): Promise<string> => {
@@ -194,25 +193,17 @@ export const streamAssistantChat = async (params: {
   }
 };
 
-export const findDirectorForMovie = async (title: string, year: number | null): Promise<{ director: string, wikidataId?: string }> => {
-  console.log(`Starting findDirectorForMovie for "${title}" (${year})`);
-  
+export const findDirectorForMovie = async (title: string, year: number | null, wikidataId?: string): Promise<{ director: string, wikidataId?: string }> => {
   // 1. Try OMDB
-  const omdbKey = process.env.OMDB_KEY || "dc3946fe";
-  console.log("OMDB Key status:", omdbKey ? "Using key (starts with " + omdbKey.substring(0, 3) + "...)" : "Missing");
+  const omdbKey = getClientEnv('VITE_OMDB_KEY', 'OMDB_KEY') || "dc3946fe";
   if (omdbKey) {
     try {
       const yearParam = year ? `&y=${year}` : '';
       const url = `https://www.omdbapi.com/?t=${encodeURIComponent(title)}${yearParam}&apikey=${omdbKey}`;
-      console.log("OMDB Fetch URL:", url);
       const resp = await fetch(url);
-      if (!resp.ok) {
-        console.warn(`OMDB API returned status: ${resp.status}`);
-      } else {
+      if (resp.ok) {
         const data = await resp.json();
-        console.log("OMDB Response:", data);
         if (data.Response === "True" && data.Director && data.Director !== "N/A" && data.Director.toLowerCase() !== "none" && data.Director.toLowerCase() !== "unknown") {
-          console.log("SUCCESS: Director found via OMDB:", data.Director);
           return { director: data.Director };
         }
       }
@@ -220,29 +211,22 @@ export const findDirectorForMovie = async (title: string, year: number | null): 
   }
 
   // 2. Try TMDB
-  const tmdbKey = process.env.TMDB_API_KEY || "e6a44aa8865934c03ad582bc72c5b85d";
-  console.log("TMDB Key status:", tmdbKey ? "Using key (starts with " + tmdbKey.substring(0, 3) + "...)" : "Missing");
+  const tmdbKey = getClientEnv('VITE_TMDB_API_KEY', 'TMDB_API_KEY') || "e6a44aa8865934c03ad582bc72c5b85d";
   if (tmdbKey) {
     try {
       const yearParam = year ? `&year=${year}` : '';
       const searchUrl = `https://api.themoviedb.org/3/search/movie?api_key=${tmdbKey}&query=${encodeURIComponent(title)}${yearParam}`;
-      console.log("TMDB Search URL:", searchUrl);
       const resp = await fetch(searchUrl);
-      if (!resp.ok) {
-        console.warn(`TMDB API returned status: ${resp.status}`);
-      } else {
+      if (resp.ok) {
         const data = await resp.json();
-        console.log("TMDB Search Data:", data);
         if (data.results && data.results.length > 0) {
           const movieId = data.results[0].id;
-          console.log("TMDB Movie ID found:", movieId);
           const creditsUrl = `https://api.themoviedb.org/3/movie/${movieId}/credits?api_key=${tmdbKey}`;
           const creditsResp = await fetch(creditsUrl);
           if (creditsResp.ok) {
             const creditsData = await creditsResp.json();
-            const director = creditsData.crew.find((member: any) => member.job === "Director");
-            if (director) {
-              console.log("SUCCESS: Director found via TMDB:", director.name);
+            const director = creditsData.crew?.find((member: any) => member.job === "Director");
+            if (director?.name) {
               return { director: director.name };
             }
           }
@@ -252,39 +236,41 @@ export const findDirectorForMovie = async (title: string, year: number | null): 
   }
 
   // 3. Try IMDb (RapidAPI)
-  const rapidKey = process.env.RAPID_API_KEY || "8d0b2005e5msh7794ca50aee0eb4p14f460jsn249cb3b9d70b";
-  const rapidHost = process.env.RAPID_API_HOST_IMDB || "imdb8.p.rapidapi.com";
-  console.log("IMDb RapidAPI status:", rapidKey ? "Key Present" : "Key Missing", rapidHost ? "Host Present" : "Host Missing");
+  const rapidKey = getClientEnv('VITE_RAPID_API_KEY', 'RAPID_API_KEY') || "8d0b2005e5msh7794ca50aee0eb4p14f460jsn249cb3b9d70b";
+  const rapidHost = getClientEnv('VITE_RAPID_API_HOST_IMDB', 'RAPID_API_HOST_IMDB') || "imdb8.p.rapidapi.com";
   if (rapidKey && rapidHost) {
     try {
       const findUrl = `https://${rapidHost}/title/find?q=${encodeURIComponent(title)}`;
-      console.log("IMDb RapidAPI Find URL:", findUrl);
       const resp = await fetch(findUrl, {
         headers: {
           'x-rapidapi-key': rapidKey,
           'x-rapidapi-host': rapidHost
         }
       });
-      if (!resp.ok) {
-        console.warn(`IMDb RapidAPI returned status: ${resp.status}`);
-      } else {
+      if (resp.ok) {
         const data = await resp.json();
-        console.log("IMDb RapidAPI Find Data:", data);
         if (data.results && data.results.length > 0) {
           const match = (year && data.results.find((r: any) => r.year === year)) || data.results[0];
           if (match && match.id) {
             const tconst = match.id.split('/')[2];
-            console.log("IMDb tconst found:", tconst);
-            const detailsUrl = `https://${rapidHost}/title/get-details?tconst=${tconst}`;
-            const detailsResp = await fetch(detailsUrl, {
-              headers: {
-                'x-rapidapi-key': rapidKey,
-                'x-rapidapi-host': rapidHost
+            if (tconst) {
+              const detailsUrl = `https://${rapidHost}/title/get-full-credits?tconst=${tconst}`;
+              const detailsResp = await fetch(detailsUrl, {
+                headers: {
+                  'x-rapidapi-key': rapidKey,
+                  'x-rapidapi-host': rapidHost
+                }
+              });
+              if (detailsResp.ok) {
+                const detailsData = await detailsResp.json();
+                const directors = detailsData?.crew?.director || detailsData?.directors || [];
+                const directorNames = (Array.isArray(directors) ? directors : [])
+                  .map((d: any) => d?.name)
+                  .filter(Boolean);
+                if (directorNames.length > 0) {
+                  return { director: directorNames.join(', ') };
+                }
               }
-            });
-            if (detailsResp.ok) {
-              const detailsData = await detailsResp.json();
-              console.log("IMDb Details Data:", detailsData);
             }
           }
         }
@@ -292,15 +278,22 @@ export const findDirectorForMovie = async (title: string, year: number | null): 
     } catch (e) { console.error("IMDb RapidAPI error:", e); }
   }
 
-  console.log("FAILURE: No director found in any source (Gemini fallback removed).");
+  // 4. AI Fallback via Gemini Server Route
+  try {
+    const aiRes = await postGeminiJson<{ director: string }>('find-director', { title, year, wikidataId });
+    if (aiRes?.director && aiRes.director.toLowerCase() !== 'unknown' && aiRes.director.toLowerCase() !== 'n/a') {
+      return { director: aiRes.director };
+    }
+  } catch (e) {
+    console.warn("Gemini find-director fallback error:", e);
+  }
+
   return { director: "Unknown" };
 };
 
-export const findYearForMovie = async (title: string): Promise<{ year: number } | null> => {
-  console.log(`Starting findYearForMovie for "${title}"`);
-  
+export const findYearForMovie = async (title: string, wikidataId?: string): Promise<{ year: number } | null> => {
   // 1. Try OMDB
-  const omdbKey = process.env.OMDB_KEY || "dc3946fe";
+  const omdbKey = getClientEnv('VITE_OMDB_KEY', 'OMDB_KEY') || "dc3946fe";
   if (omdbKey) {
     try {
       const url = `https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${omdbKey}`;
@@ -310,7 +303,6 @@ export const findYearForMovie = async (title: string): Promise<{ year: number } 
         if (data.Response === "True" && data.Year && data.Year !== "N/A") {
           const yearMatch = data.Year.match(/\d{4}/);
           if (yearMatch) {
-            console.log("SUCCESS: Year found via OMDB:", yearMatch[0]);
             return { year: parseInt(yearMatch[0], 10) };
           }
         }
@@ -319,7 +311,7 @@ export const findYearForMovie = async (title: string): Promise<{ year: number } 
   }
 
   // 2. Try TMDB
-  const tmdbKey = process.env.TMDB_API_KEY || "e6a44aa8865934c03ad582bc72c5b85d";
+  const tmdbKey = getClientEnv('VITE_TMDB_API_KEY', 'TMDB_API_KEY') || "e6a44aa8865934c03ad582bc72c5b85d";
   if (tmdbKey) {
     try {
       const searchUrl = `https://api.themoviedb.org/3/search/movie?api_key=${tmdbKey}&query=${encodeURIComponent(title)}`;
@@ -329,7 +321,6 @@ export const findYearForMovie = async (title: string): Promise<{ year: number } 
         if (data.results && data.results.length > 0 && data.results[0].release_date) {
           const yearMatch = data.results[0].release_date.match(/\d{4}/);
           if (yearMatch) {
-            console.log("SUCCESS: Year found via TMDB:", yearMatch[0]);
             return { year: parseInt(yearMatch[0], 10) };
           }
         }
@@ -337,14 +328,22 @@ export const findYearForMovie = async (title: string): Promise<{ year: number } 
     } catch (e) { console.error("TMDB year error:", e); }
   }
 
+  // 3. AI Fallback via Gemini Server Route
+  try {
+    const aiRes = await postGeminiJson<{ year: number | null }>('find-year', { title, wikidataId });
+    if (aiRes?.year) {
+      return { year: aiRes.year };
+    }
+  } catch (e) {
+    console.warn("Gemini find-year fallback error:", e);
+  }
+
   return null;
 };
 
-export const findLanguageForMovie = async (title: string): Promise<{ language: string } | null> => {
-  console.log(`Starting findLanguageForMovie for "${title}"`);
-  
+export const findLanguageForMovie = async (title: string, wikidataId?: string): Promise<{ language: string } | null> => {
   // 1. Try OMDB
-  const omdbKey = process.env.OMDB_KEY || "dc3946fe";
+  const omdbKey = getClientEnv('VITE_OMDB_KEY', 'OMDB_KEY') || "dc3946fe";
   if (omdbKey) {
     try {
       const url = `https://www.omdbapi.com/?t=${encodeURIComponent(title)}&apikey=${omdbKey}`;
@@ -354,7 +353,6 @@ export const findLanguageForMovie = async (title: string): Promise<{ language: s
         if (data.Response === "True" && data.Language && data.Language !== "N/A" && data.Language.toLowerCase() !== "none") {
           const primaryLanguage = data.Language.split(',')[0].trim();
           if (primaryLanguage && primaryLanguage.toLowerCase() !== "none" && primaryLanguage.toLowerCase() !== "unknown" && primaryLanguage !== "N/A") {
-            console.log("SUCCESS: Language found via OMDB:", primaryLanguage);
             return { language: primaryLanguage };
           }
         }
@@ -363,7 +361,7 @@ export const findLanguageForMovie = async (title: string): Promise<{ language: s
   }
 
   // 2. Try TMDB
-  const tmdbKey = process.env.TMDB_API_KEY || "e6a44aa8865934c03ad582bc72c5b85d";
+  const tmdbKey = getClientEnv('VITE_TMDB_API_KEY', 'TMDB_API_KEY') || "e6a44aa8865934c03ad582bc72c5b85d";
   if (tmdbKey) {
     try {
       const searchUrl = `https://api.themoviedb.org/3/search/movie?api_key=${tmdbKey}&query=${encodeURIComponent(title)}`;
@@ -373,7 +371,6 @@ export const findLanguageForMovie = async (title: string): Promise<{ language: s
         if (data.results && data.results.length > 0) {
           const langCode = data.results[0].original_language;
           if (langCode && langCode.toLowerCase() !== "xx" && langCode.toLowerCase() !== "none") {
-            // Convert code to name (basic mapping for common ones, or just return code if complex)
             const langMap: Record<string, string> = {
               'en': 'English', 'fr': 'French', 'es': 'Spanish', 'de': 'German', 'it': 'Italian',
               'ja': 'Japanese', 'ko': 'Korean', 'zh': 'Chinese', 'ru': 'Russian', 'pt': 'Portuguese',
@@ -381,7 +378,6 @@ export const findLanguageForMovie = async (title: string): Promise<{ language: s
               'pl': 'Polish', 'da': 'Danish', 'fi': 'Finnish', 'no': 'Norwegian', 'cs': 'Czech'
             };
             const languageName = langMap[langCode] || langCode.toUpperCase();
-            console.log("SUCCESS: Language found via TMDB:", languageName);
             return { language: languageName };
           }
         }
@@ -389,6 +385,15 @@ export const findLanguageForMovie = async (title: string): Promise<{ language: s
     } catch (e) { console.error("TMDB language error:", e); }
   }
 
-  console.log("FAILURE: No language found in any source.");
+  // 3. AI Fallback via Gemini Server Route
+  try {
+    const aiRes = await postGeminiJson<{ language: string }>('find-language', { title, wikidataId });
+    if (aiRes?.language && aiRes.language.toLowerCase() !== 'unknown' && aiRes.language.toLowerCase() !== 'n/a') {
+      return { language: aiRes.language };
+    }
+  } catch (e) {
+    console.warn("Gemini find-language fallback error:", e);
+  }
+
   return { language: "Unknown" };
 };

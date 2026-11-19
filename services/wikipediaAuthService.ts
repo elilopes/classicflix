@@ -20,10 +20,13 @@ export interface WikipediaUser {
     groups?: string[];
   };
   accessToken?: string;
+  expiresIn?: number;
 }
 
 export interface WikipediaAuthUrlResponse {
   configured: boolean;
+  hasClientId?: boolean;
+  hasClientSecret?: boolean;
   url?: string;
   redirectUri: string;
   clientId?: string;
@@ -31,6 +34,17 @@ export interface WikipediaAuthUrlResponse {
   devCallbackUrl?: string;
   sharedCallbackUrl?: string;
   message?: string;
+}
+
+export interface WikipediaOAuthStatus {
+  configured: boolean;
+  hasClientId: boolean;
+  hasClientSecret: boolean;
+  authenticated: boolean;
+  username: string | null;
+  setupUrl?: string;
+  devCallbackUrl?: string;
+  sharedCallbackUrl?: string;
 }
 
 /**
@@ -46,8 +60,30 @@ export const getWikipediaAuthUrl = async (): Promise<WikipediaAuthUrlResponse> =
 };
 
 /**
+ * Check Wikimedia OAuth configuration & active cookie session status
+ */
+export const getWikipediaOAuthStatus = async (): Promise<WikipediaOAuthStatus> => {
+  const response = await fetch('/api/auth/wikipedia/status');
+  if (!response.ok) {
+    throw new Error('Falha ao verificar status OAuth da Wikipedia');
+  }
+  return await response.json();
+};
+
+/**
+ * Clear Wikimedia OAuth server cookie session
+ */
+export const logoutWikipediaOAuth = async (): Promise<void> => {
+  try {
+    await fetch('/api/auth/wikipedia/logout', { method: 'POST' });
+  } catch (e) {
+    console.warn('Erro ao limpar sessão OAuth da Wikipedia:', e);
+  }
+};
+
+/**
  * Direct verification of Wikipedia username via public Wikimedia API
- * Allows immediate interactive testing and validation
+ * Allows immediate interactive validation
  */
 export const verifyWikipediaUser = async (username: string): Promise<WikipediaUser> => {
   const response = await fetch('/api/auth/wikipedia/verify', {

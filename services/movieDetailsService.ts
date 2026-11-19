@@ -130,6 +130,9 @@ export const getAggregatedMovieDetails = async (movie: Movie, language: string =
             baseDetails.countries = merge(baseDetails.countries, wikiData.countries);
             baseDetails.basedOn = merge(baseDetails.basedOn, wikiData.basedOn);
             
+            if (wikiData.directors && wikiData.directors.length > 0 && (!baseDetails.director || baseDetails.director.toLowerCase() === "unknown" || baseDetails.director.toLowerCase() === "n/a")) {
+                baseDetails.director = wikiData.directors.join(', ');
+            }
             if (wikiData.originalTitle && !baseDetails.originalTitle) baseDetails.originalTitle = wikiData.originalTitle;
             if (wikiData.color && !baseDetails.color) baseDetails.color = wikiData.color;
         }
@@ -139,7 +142,7 @@ export const getAggregatedMovieDetails = async (movie: Movie, language: string =
             if (tmdbData.description && tmdbData.description.length > baseDetails.description.length) {
                 baseDetails.description = tmdbData.description;
             }
-            if (tmdbData.director && baseDetails.director === "Unknown") baseDetails.director = tmdbData.director;
+            if (tmdbData.director && (!baseDetails.director || baseDetails.director.toLowerCase() === "unknown" || baseDetails.director.toLowerCase() === "n/a")) baseDetails.director = tmdbData.director;
             if (tmdbData.rating && (!baseDetails.rating || baseDetails.rating === "N/A")) baseDetails.rating = tmdbData.rating;
             if (tmdbData.originalTitle) baseDetails.originalTitle = tmdbData.originalTitle;
 
@@ -165,6 +168,12 @@ export const getAggregatedMovieDetails = async (movie: Movie, language: string =
             if ((!baseDetails.rating || baseDetails.rating === "N/A") && tvMazeData.rating) baseDetails.rating = tvMazeData.rating;
             if (baseDetails.genres.length === 0 && tvMazeData.genres) baseDetails.genres = tvMazeData.genres;
             if (!baseDetails.description && tvMazeData.description) baseDetails.description = tvMazeData.description;
+        }
+
+        // 5. Fallback director to producers (Wikidata P162 / TMDb) if still empty or Unknown
+        const dirLower = (baseDetails.director || "").trim().toLowerCase();
+        if ((!dirLower || dirLower === "unknown" || dirLower === "desconhecido" || dirLower === "desconhecida" || dirLower === "n/a" || dirLower === "none") && baseDetails.producers && baseDetails.producers.length > 0) {
+            baseDetails.director = baseDetails.producers.join(', ');
         }
 
     } catch (error) {

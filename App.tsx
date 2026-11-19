@@ -1,13 +1,10 @@
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { motion } from 'motion/react';
 import { DECADES, RATING_CATEGORIES, APP_TRANSLATIONS } from './constants';
 import { Movie, FilterState, AppLanguage, UserMovieInteraction } from './types';
 import { AppModals } from './components/AppModals';
-import { FilterBar } from './components/FilterBar';
-import { AiConcierge } from './components/AiConcierge';
 import { VideoConverter } from './components/VideoConverter';
-import { MovieCard, SkeletonCard } from './components/MovieCard'; 
+import { HomeInterface, HOME_UI_CONFIG } from './components/HomeInterface';
 // @ts-ignore
 import jsPDF from 'jspdf';
 // @ts-ignore
@@ -26,10 +23,7 @@ import {
     signInWithGoogle
 } from './services/supabaseClient';
 
-import { 
-  Search, Film, User, LogOut, Loader2, Plus, RefreshCw, ChevronDown, Clapperboard, Globe, TrendingUp, Download, FileText, CheckCircle, X,
-  History, ShieldAlert, Orbit, Trophy, Cpu, Heart, Clock
-} from 'lucide-react';
+import { searchCatalogWithAI } from './services/geminiService';
 import { GalaxyView } from './components/GalaxyView';
 import { TimelineModal } from './components/TimelineModal';
 import { AdminDeleteModal } from './components/AdminDeleteModal';
@@ -38,7 +32,6 @@ import MosaicGame from './components/MosaicGame';
 import { AdedonhaGame } from './components/AdedonhaGame';
 import NosferatuGame from './components/NosferatuGame';
 import { MiniGamesModal } from './components/MiniGamesModal';
-import { Gamepad2 } from 'lucide-react';
 import { BestReviewsModal } from './components/BestReviewsModal';
 import { McpConnectedAppsModal } from './components/McpConnectedAppsModal';
 import { WikipediaAuthModal } from './components/WikipediaAuthModal';
@@ -88,6 +81,11 @@ export default function App() {
   const [visibleCount, setVisibleCount] = useState(48);
   const [isExporting, setIsExporting] = useState(false);
 
+  const [aiMatchedIds, setAiMatchedIds] = useState<string[] | null>(null);
+  const [aiSearchReasoning, setAiSearchReasoning] = useState<string | null>(null);
+  const [aiSearchError, setAiSearchError] = useState<string | null>(null);
+  const [isAiSearching, setIsAiSearching] = useState(false);
+
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [isLangMenuOpen, setIsLangMenuOpen] = useState(false);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
@@ -120,8 +118,27 @@ export default function App() {
   const [showGalaxyView, setShowGalaxyView] = useState(false);
 
   const isFiltering = useMemo(() => {
-    return !!(filters.searchQuery || filters.selectedGenre || filters.selectedLanguage || filters.selectedYear || filters.selectedDecade || filters.selectedRating || filters.selectedColor || filters.selectedTheme || filters.selectedDuration || filters.hasSubtitles !== null || filters.selectedDirector || filters.selectedAward || filters.hasPosterOnly || filters.hasVideoOnly || filters.selectedTop30 || filters.selectedType);
-  }, [filters]);
+    return !!(aiMatchedIds !== null || filters.searchQuery || filters.selectedGenre || filters.selectedLanguage || filters.selectedYear || filters.selectedDecade || filters.selectedRating || filters.selectedColor || filters.selectedTheme || filters.selectedDuration || filters.hasSubtitles !== null || filters.selectedDirector || filters.selectedAward || filters.hasPosterOnly || filters.hasVideoOnly || filters.selectedTop30 || filters.selectedType);
+  }, [filters, aiMatchedIds]);
+
+  const handleAiCatalogSearch = async () => {
+    const q = filters.searchQuery.trim();
+    if (!q || isAiSearching) return;
+    setIsAiSearching(true);
+    setAiSearchError(null);
+    setShowSuggestions(false);
+    try {
+      const result = await searchCatalogWithAI(q, databaseMovies);
+      setAiMatchedIds(Array.isArray(result.matchedIds) ? result.matchedIds : []);
+      setAiSearchReasoning(result.reasoning || null);
+    } catch (err: any) {
+      setAiSearchError(err?.message || 'Erro ao executar pesquisa com IA.');
+      setAiMatchedIds(null);
+      setAiSearchReasoning(null);
+    } finally {
+      setIsAiSearching(false);
+    }
+  };
 
   useEffect(() => { setVisibleCount(48); }, [filters]);
 
@@ -242,10 +259,12 @@ export default function App() {
       if (filters.hasVideoOnly && (!movie.videoUrl || movie.videoUrl === 'null' || movie.videoUrl === 'undefined' || movie.videoUrl.trim() === '')) return false;
       if (!isFiltering) return true;
       const searchLower = (filters.searchQuery || '').toLowerCase();
-      const matchesSearch = !filters.searchQuery || 
-        (movie.title || '').toLowerCase().includes(searchLower) || 
-        (movie.titlePt && movie.titlePt.toLowerCase().includes(searchLower)) ||
-        (movie.description && movie.description.toLowerCase().includes(searchLower));
+      const matchesSearch = aiMatchedIds !== null
+        ? aiMatchedIds.includes(movie.id)
+        : !filters.searchQuery || 
+          (movie.title || '').toLowerCase().includes(searchLower) || 
+          (movie.titlePt && movie.titlePt.toLowerCase().includes(searchLower)) ||
+          (movie.description && movie.description.toLowerCase().includes(searchLower));
       const matchesGenre = !filters.selectedGenre || (movie.genres || []).includes(filters.selectedGenre);
       const matchesLang = !filters.selectedLanguage || getCanonicalLanguage(movie.language) === filters.selectedLanguage;
       const matchesYear = !filters.selectedYear || movie.year === filters.selectedYear;
@@ -283,7 +302,7 @@ export default function App() {
       const matchesColor = !filters.selectedColor || movie.color === filters.selectedColor;
       return matchesSearch && matchesGenre && matchesLang && matchesYear && matchesDecade && matchesDirector && matchesTheme && matchesSubtitles && matchesAward && matchesRating && matchesDuration && matchesColor && matchesType;
     });
-  }, [databaseMovies, filters, isFiltering]);
+  }, [databaseMovies, filters, isFiltering, aiMatchedIds]);
 
   const displayedMovies = useMemo(() => filteredMovies.slice(0, visibleCount), [filteredMovies, visibleCount]);
   
@@ -450,381 +469,106 @@ export default function App() {
       }
   };
 
-  const MotionClapperboard = motion(Clapperboard);
+  const resetFilters = () => {
+    setFilters({
+      searchQuery: '',
+      selectedGenre: null,
+      selectedLanguage: null,
+      selectedYear: null,
+      selectedDecade: null,
+      selectedRating: null,
+      selectedColor: null,
+      selectedTheme: null,
+      selectedSource: null,
+      selectedDuration: null,
+      hasSubtitles: null,
+      selectedDirector: null,
+      selectedAward: null,
+      hasPosterOnly: false,
+      hasVideoOnly: false,
+      selectedTop30: null,
+      selectedType: null
+    });
+    setAiMatchedIds(null);
+    setAiSearchReasoning(null);
+    setAiSearchError(null);
+  };
 
   return (
     <div className="min-vh-100 bg-black text-white d-flex flex-column">
-      <nav className="navbar navbar-expand-lg navbar-dark bg-surface sticky-top border-bottom border-secondary px-3 shadow" style={{ zIndex: 1020 }}>
-        <div className="container-fluid">
-          <a className="navbar-brand fw-bold text-danger d-flex align-items-center gap-2" href="#" onClick={() => setFilters({searchQuery: '', selectedGenre: null, selectedLanguage: null, selectedYear: null, selectedDecade: null, selectedRating: null, selectedColor: null, selectedTheme: null, selectedSource: null, selectedDuration: null, hasSubtitles: null, selectedDirector: null, selectedAward: null, hasPosterOnly: false, hasVideoOnly: false, selectedTop30: null, selectedType: null})}>
-            <Film size={26} /> <span>CLASSICFLIX</span>
-          </a>
-          
-          <div className="d-flex flex-grow-1 mx-4 max-w-lg position-relative" ref={searchContainerRef}>
-            <input 
-                className="form-control bg-dark text-white border-secondary rounded ps-4 pe-5 shadow-sm" 
-                placeholder={t.searchPlaceholder} 
-                value={filters.searchQuery} 
-                onChange={e => setFilters({...filters, searchQuery: e.target.value})}
-                onFocus={() => setShowSuggestions(true)}
-            />
-            <div className="position-absolute end-0 top-50 translate-middle-y d-flex align-items-center gap-2 me-3">
-              {filters.searchQuery && (
-                <button 
-                  className="btn btn-link p-0 text-secondary hover-white border-0 shadow-none d-flex align-items-center"
-                  onClick={() => setFilters({...filters, searchQuery: ''})}
-                  title={t.clearSearch || "Clear search"}
-                >
-                  <X size={18} />
-                </button>
-              )}
-              <Search className="text-secondary" size={18} />
-            </div>
-            
-            {showSuggestions && !filters.searchQuery && mostPopularMovies.length > 0 && (
-                <div className="position-absolute top-100 start-0 w-100 bg-dark border border-secondary rounded-bottom shadow-lg mt-1" style={{ zIndex: 1500 }}>
-                    <h6 className="px-3 py-2 m-0 text-white-50 small border-bottom border-secondary fw-bold d-flex align-items-center gap-2">
-                        <TrendingUp size={14} className="text-danger" /> {t.mostPopular || 'Most Popular'}
-                    </h6>
-                    <div className="list-group list-group-flush">
-                        {mostPopularMovies.map(movie => (
-                            <button 
-                                key={movie.id} 
-                                className="list-group-item list-group-item-action bg-dark text-white border-0 d-flex gap-2 align-items-center py-2"
-                                onClick={() => handleMovieOpen(movie)}
-                            >
-                                <div style={{ width: '30px', height: '45px', background: '#333', backgroundImage: `url(${movie.posterUrl})`, backgroundSize: 'cover' }} className="rounded"></div>
-                                <div className="text-truncate">
-                                    <div className="fw-bold small">{movie.titlePt || movie.title}</div>
-                                    <div className="text-white-50 xsmall">{movie.year}</div>
-                                </div>
-                            </button>
-                        ))}
-                    </div>
-                </div>
-            )}
-          </div>
-
-          <div className="d-flex gap-2 align-items-center flex-nowrap py-1" style={{ maxWidth: '100%' }}>
-            {/* Language Dropdown placed OUTSIDE overflow-x-auto so it is never clipped by FilterBar */}
-            <div className="position-relative flex-shrink-0" ref={langMenuRef}>
-              <button 
-                type="button"
-                className="btn btn-dark btn-sm dropdown-toggle border-secondary d-flex align-items-center gap-2"
-                onClick={() => setIsLangMenuOpen(prev => !prev)}
-                aria-expanded={isLangMenuOpen}
-              >
-                <Globe size={16} className="text-info" /> <span className="d-none d-sm-inline">{appLanguage.toUpperCase()}</span>
-              </button>
-              {isLangMenuOpen && (
-                <ul 
-                  className="dropdown-menu dropdown-menu-dark dropdown-menu-end shadow-lg border-secondary show" 
-                  style={{ position: 'absolute', right: 0, top: '100%', marginTop: '4px', zIndex: 2500 }}
-                >
-                   <li><button className={`dropdown-item py-2 ${appLanguage === 'en' ? 'active' : ''}`} onClick={() => { setAppLanguage('en'); setIsLangMenuOpen(false); }}>🇺🇸 English</button></li>
-                   <li><button className={`dropdown-item py-2 ${appLanguage === 'pt' ? 'active' : ''}`} onClick={() => { setAppLanguage('pt'); setIsLangMenuOpen(false); }}>🇧🇷 Português</button></li>
-                   <li><button className={`dropdown-item py-2 ${appLanguage === 'it' ? 'active' : ''}`} onClick={() => { setAppLanguage('it'); setIsLangMenuOpen(false); }}>🇮🇹 Italiano</button></li>
-                   <li><button className={`dropdown-item py-2 ${appLanguage === 'hi' ? 'active' : ''}`} onClick={() => { setAppLanguage('hi'); setIsLangMenuOpen(false); }}>🇮🇳 हिन्दी</button></li>
-                   <li><button className={`dropdown-item py-2 ${appLanguage === 'ru' ? 'active' : ''}`} onClick={() => { setAppLanguage('ru'); setIsLangMenuOpen(false); }}>🇷🇺 Русский</button></li>
-                   <li><button className={`dropdown-item py-2 ${appLanguage === 'zh' ? 'active' : ''}`} onClick={() => { setAppLanguage('zh'); setIsLangMenuOpen(false); }}>🇨🇳 中文</button></li>
-                </ul>
-              )}
-            </div>
-
-            <div className="d-flex gap-2 align-items-center overflow-x-auto text-nowrap flex-nowrap no-scrollbar" style={{ WebkitOverflowScrolling: 'touch' }}>
-              <button className="btn btn-outline-success btn-sm d-flex align-items-center gap-1 flex-shrink-0" onClick={() => setShowAddModal(true)}><Plus size={16} /><span className="d-none d-lg-inline">{t.addMovie}</span></button>
-              <button className="btn btn-outline-danger btn-sm d-flex align-items-center gap-1 flex-shrink-0" onClick={() => setShowTimelineModal(true)}><History size={16} /><span className="d-none d-lg-inline">{t.timeline}</span></button>
-              <button className="btn btn-outline-warning btn-sm d-flex align-items-center gap-1 flex-shrink-0" onClick={() => setShowConverterModal(true)}><RefreshCw size={16} /><span className="d-none d-lg-inline">{t.videoConverter}</span></button>
-
-              <button className="btn btn-outline-warning btn-sm d-flex align-items-center gap-1 flex-shrink-0" onClick={() => setShowBestReviewsModal(true)}>
-                <Trophy size={16} />
-                <span className="d-none d-lg-inline">{t.topReviews || 'Top Reviews'}</span>
-              </button>
-              <button 
-                className="btn btn-outline-info btn-sm d-flex align-items-center gap-1 flex-shrink-0" 
-                onClick={() => setShowMcpModal(true)}
-                title="Model Context Protocol & Google Connected Apps Platform"
-              >
-                <Cpu size={16} />
-                <span className="d-none d-lg-inline">MCP</span>
-              </button>
-              
-              {user?.email === 'liclopes@gmail.com' && (
-                <button 
-                  className="btn btn-outline-danger btn-sm d-flex align-items-center gap-1 flex-shrink-0" 
-                  onClick={() => {
-                    setShowAdminDeleteModal(true);
-                    if (!getGoogleDriveAccessToken()) {
-                      void connectGoogleDrive().catch(() => {});
-                    }
-                  }}
-                  title="Painel do Administrador"
-                >
-                  <ShieldAlert size={16} />
-                  <span className="d-none d-lg-inline">Admin</span>
-                </button>
-              )}
-
-              <button className="btn btn-outline-primary btn-sm flex-shrink-0" onClick={refreshData}><RefreshCw size={16} /></button>
-            </div>
-            
-            {user ? (
-              <div className="position-relative flex-shrink-0" ref={userMenuRef}>
-                <button 
-                  type="button"
-                  className="btn btn-dark btn-sm dropdown-toggle border-secondary d-flex align-items-center gap-2"
-                  onClick={() => setIsUserMenuOpen(prev => !prev)}
-                  aria-expanded={isUserMenuOpen}
-                >
-                  {user.provider === 'wikipedia' ? (
-                    <div className="bg-white rounded-circle p-1 d-flex align-items-center justify-content-center" style={{ width: '20px', height: '20px' }}>
-                      <img 
-                        src="https://upload.wikimedia.org/wikipedia/commons/6/63/Wikipedia-logo-en-big.png" 
-                        alt="Wikipedia" 
-                        style={{ width: '14px', height: '14px', objectFit: 'contain' }} 
-                      />
-                    </div>
-                  ) : (
-                    <User size={18} className="text-danger" />
-                  )}
-                  <span className="d-none d-sm-inline">{user.displayName || user.email?.split('@')[0]}</span>
-                </button>
-                {isUserMenuOpen && (
-                  <ul 
-                    className="dropdown-menu dropdown-menu-dark dropdown-menu-end shadow-lg border-secondary show" 
-                    style={{ position: 'absolute', right: 0, top: '100%', marginTop: '4px', zIndex: 2500, minWidth: '230px' }}
-                  >
-                    {user.provider === 'wikipedia' && (
-                      <li className="px-3 py-2 border-bottom border-secondary small">
-                        <div className="text-white-50 xsmall text-uppercase">{appLanguage === 'pt' ? 'Conta Wikipedia' : 'Wikipedia Account'}</div>
-                        <div className="fw-bold text-info">@{user.displayName}</div>
-                        {user.user_metadata?.edit_count !== undefined && (
-                          <div className="text-white-50 xsmall">{user.user_metadata.edit_count} {appLanguage === 'pt' ? 'edições' : 'edits'}</div>
-                        )}
-                      </li>
-                    )}
-                    <li>
-                      <h6 className="dropdown-header text-uppercase xsmall text-white-50 fw-bold pt-2 pb-1">
-                        {t.myLists || 'Minhas Listas'}
-                      </h6>
-                    </li>
-                    <li>
-                      <button
-                        className="dropdown-item py-2 d-flex align-items-center justify-content-between gap-2"
-                        onClick={() => {
-                          setUserListsTab('favorites');
-                          setShowUserListsModal(true);
-                          setIsUserMenuOpen(false);
-                        }}
-                      >
-                        <span className="d-flex align-items-center gap-2">
-                          <Heart size={15} className="text-danger" fill="currentColor" />
-                          <span>{t.favorites || 'Favoritos'}</span>
-                        </span>
-                        <span className="badge bg-danger rounded-pill">
-                          {interactions.filter(i => i.isfavorite).length}
-                        </span>
-                      </button>
-                    </li>
-                    <li>
-                      <button
-                        className="dropdown-item py-2 d-flex align-items-center justify-content-between gap-2"
-                        onClick={() => {
-                          setUserListsTab('watchlater');
-                          setShowUserListsModal(true);
-                          setIsUserMenuOpen(false);
-                        }}
-                      >
-                        <span className="d-flex align-items-center gap-2">
-                          <Clock size={15} className="text-primary" />
-                          <span>{t.watchLater || 'Ver Depois'}</span>
-                        </span>
-                        <span className="badge bg-primary rounded-pill">
-                          {interactions.filter(i => i.watchlater || i.iswatchlist).length}
-                        </span>
-                      </button>
-                    </li>
-                    <li>
-                      <button
-                        className="dropdown-item py-2 d-flex align-items-center justify-content-between gap-2"
-                        onClick={() => {
-                          setUserListsTab('watched');
-                          setShowUserListsModal(true);
-                          setIsUserMenuOpen(false);
-                        }}
-                      >
-                        <span className="d-flex align-items-center gap-2">
-                          <CheckCircle size={15} className="text-success" />
-                          <span>{t.alreadyWatched || 'Já Assistidos'}</span>
-                        </span>
-                        <span className="badge bg-success rounded-pill">
-                          {interactions.filter(i => i.iswatched).length}
-                        </span>
-                      </button>
-                    </li>
-                    <li><hr className="dropdown-divider border-secondary my-1" /></li>
-                    <li><button className="dropdown-item py-2" onClick={async () => { setIsUserMenuOpen(false); await signOutUser(); setUser(null); setInteractions([]); }}><LogOut size={16} className="me-2" /> {t.logout}</button></li>
-                  </ul>
-                )}
-              </div>
-            ) : <button className="btn btn-danger btn-sm px-3 shadow flex-shrink-0" onClick={() => setShowAuthModal(true)}>{t.login}</button>}
-          </div>
-        </div>
-      </nav>
-
-      <main className="flex-grow-1">
-        <FilterBar 
-          filters={filters} 
-          setFilters={setFilters} 
-          appLanguage={appLanguage} 
-          t={t} 
-          uniqueDirectors={uniqueDirectors} 
-          uniqueAwards={uniqueAwards} 
-          viewMode={viewMode} 
-          setViewMode={setViewMode} 
-          languageCounts={stats.lang} 
-          genreCounts={stats.gen} 
-          themeCounts={stats.th} 
-        />
-        
-        <div className="container-fluid p-4">
-          {isLoading ? (
-            <div className="row row-cols-5 row-cols-sm-6 row-cols-md-8 row-cols-lg-10 row-cols-xl-12 g-2">
-              {[...Array(24)].map((_, i) => <SkeletonCard key={i} />)}
-            </div>
-          ) : databaseMovies.length === 0 ? (
-             <div className="text-center py-5 my-5 animate-in">
-              <MotionClapperboard 
-                size={64} 
-                className="text-danger mb-4 opacity-75 mx-auto"
-                animate={{ 
-                  rotate: [0, -20, 0, 0, 360, 360, -5, 5, -5, 5, 0],
-                  scale: [1, 1.1, 1, 1.3, 1, 1, 1, 1.1, 1, 1.1, 1]
-                }}
-                transition={{ 
-                  duration: 10, 
-                  repeat: Infinity,
-                  ease: "easeInOut",
-                  times: [0, 0.1, 0.2, 0.3, 0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 1]
-                }}
-              />
-              <h2 className="fw-bold mb-3">Banco de Dados Off-line ou Vazio</h2>
-              <p className="text-secondary lead mx-auto" style={{ maxWidth: '600px' }}>
-                Não foi possível conectar ao catálogo do Supabase. Verifique a chave Anon JWT e a URL do projeto.
-              </p>
-              <button className="btn btn-danger mt-3" onClick={refreshData}>Tentar Novamente</button>
-            </div>
-          ) : !isFiltering ? (
-            <div className="text-center py-5 my-5 animate-in old-film-bg">
-              <div className="old-film-scratch"></div>
-              <div className="old-film-scratch-2"></div>
-              <div className="old-film-content">
-                <MotionClapperboard 
-                  size={64} 
-                  className="text-danger mb-4 opacity-75 mx-auto"
-                  animate={{ 
-                    rotate: [0, -20, 0, 0, 360, 360, -5, 5, -5, 5, 0],
-                    scale: [1, 1.1, 1, 1.3, 1, 1, 1, 1.1, 1, 1.1, 1]
-                  }}
-                  transition={{ 
-                    duration: 10, 
-                    repeat: Infinity,
-                    ease: "easeInOut",
-                    times: [0, 0.1, 0.2, 0.3, 0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 1]
-                  }}
-                />
-                <h2 className="fw-bold mb-3">{t.welcomeTitle || "Welcome to ClassicFlix"}</h2>
-                <p className="text-secondary lead mx-auto" style={{ maxWidth: '600px' }}>
-                  {t.welcomeText || "Explore the golden age of cinema in public domain. To start, use the search bar or pick a filter."}
-                </p>
-              </div>
-            </div>
-          ) : (
-            <>
-              <div className="d-flex justify-content-between align-items-center mb-4 px-1 animate-in">
-                  <span className="text-white-50 d-flex align-items-center gap-2">
-                     <CheckCircle size={16} className="text-success" />
-                     {t.foundVideos.replace('{count}', filteredMovies.length.toString())}
-                  </span>
-                  
-                  {filteredMovies.length > 0 && (
-                      <button 
-                        className="btn btn-sm btn-outline-light d-flex align-items-center gap-2" 
-                        onClick={handleExportPDF}
-                        disabled={isExporting}
-                      >
-                         {isExporting ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
-                         {isExporting ? t.downloading : t.exportPdf}
-                      </button>
-                  )}
-              </div>
-
-              {/* GRID ATUALIZADO: 5 (XS), 6 (SM), 8 (MD), 10 (LG), 12 (XL/XXL) */}
-              <motion.div 
-                key={filters.searchQuery + filters.selectedGenre + filters.selectedLanguage + filters.selectedYear + filters.selectedDecade + filters.selectedRating + filters.selectedColor + filters.selectedTheme + filters.selectedDuration + filters.hasSubtitles + filters.selectedDirector + filters.selectedAward + filters.hasPosterOnly + filters.hasVideoOnly + filters.selectedTop30 + filters.selectedType}
-                initial="hidden"
-                animate="visible"
-                variants={{
-                  hidden: { opacity: 0 },
-                  visible: {
-                    opacity: 1,
-                    transition: {
-                      staggerChildren: 0.05
-                    }
-                  }
-                }}
-                className="row row-cols-5 row-cols-sm-6 row-cols-md-8 row-cols-lg-10 row-cols-xl-12 g-2"
-              >
-                {displayedMovies.map(movie => (
-                  <MovieCard 
-                    key={movie.id} 
-                    movie={movie} 
-                    state={getState(movie.id)} 
-                    onOpen={() => handleMovieOpen(movie)} 
-                    viewMode={viewMode} 
-                    onPosterFound={handlePosterFound}
-                  />
-                ))}
-              </motion.div>
-              {visibleCount < filteredMovies.length && (
-                <div className="text-center mt-5 mb-3">
-                  <button className="btn btn-outline-light px-5 py-2" onClick={() => setVisibleCount(v => v + 48)}><ChevronDown size={20} /> {t.loadMore || "Load More"}</button>
-                </div>
-              )}
-              {filteredMovies.length === 0 && <div className="text-center py-5 opacity-50"><Film size={48} className="mb-3 mx-auto" /><h5>{t.noTitlesFound || "No titles found."}</h5></div>}
-            </>
-          )}
-        </div>
-      </main>
-      <footer className="bg-surface border-top border-secondary p-5 mt-5 text-center shadow">
-        <h5 className="fw-bold mb-3 text-danger">LIBRARY CLASSICFLIX</h5>
-        <p className="text-secondary small mb-2">{t.footerText}</p>
-        <p className="text-white-50 small m-0 fw-bold">
-          {t.totalMovies}: {databaseMovies.length} | {t.postersMovies || "Poster's Movies"}: {databaseMovies.filter(m => m.posterUrl && !m.posterUrl.includes('placehold.co') && !m.posterUrl.includes('ui-avatars.com')).length}
-        </p>
-      </footer>
-      
-      <AiConcierge catalog={databaseMovies} language={appLanguage} />
-
-      {/* Floating Mini Games Button */}
-      {!showMiniGamesModal && (
-        <button 
-          onClick={() => setShowMiniGamesModal(true)}
-          className="btn btn-dark position-fixed rounded-pill shadow-lg d-flex align-items-center gap-2 border border-success hover-scale side-collapsible-btn"
-          style={{ 
-            right: '16px', 
-            bottom: '90px', 
-            zIndex: 9998, 
-            padding: '8px 16px',
-            boxShadow: '0 4px 20px rgba(40, 167, 69, 0.45)',
-            background: 'rgba(10, 30, 20, 0.95)'
-          }}
-          title={t.miniGames || 'Mini Games'}
-        >
-          <Gamepad2 size={20} className="text-success flex-shrink-0" />
-          <span className="fw-bold text-white small text-nowrap label-text">🎮 {t.miniGames || 'Mini Games'}</span>
-        </button>
-      )}
+      <HomeInterface
+        appLanguage={appLanguage}
+        setAppLanguage={setAppLanguage}
+        t={t}
+        filters={filters}
+        setFilters={setFilters}
+        onResetFilters={resetFilters}
+        isFiltering={isFiltering}
+        isLoading={isLoading}
+        databaseMovies={databaseMovies}
+        filteredMovies={filteredMovies}
+        displayedMovies={displayedMovies}
+        mostPopularMovies={mostPopularMovies}
+        visibleCount={visibleCount}
+        onLoadMore={() => setVisibleCount(v => v + HOME_UI_CONFIG.loadMoreBatchSize)}
+        viewMode={viewMode}
+        setViewMode={setViewMode}
+        uniqueDirectors={uniqueDirectors}
+        uniqueAwards={uniqueAwards}
+        stats={stats}
+        getState={getState}
+        onOpenMovie={handleMovieOpen}
+        onPosterFound={handlePosterFound}
+        onRefreshData={refreshData}
+        isExporting={isExporting}
+        onExportPDF={handleExportPDF}
+        aiMatchedIds={aiMatchedIds}
+        aiSearchReasoning={aiSearchReasoning}
+        aiSearchError={aiSearchError}
+        isAiSearching={isAiSearching}
+        onAiCatalogSearch={handleAiCatalogSearch}
+        onClearAiSearch={() => {
+          setAiMatchedIds(null);
+          setAiSearchReasoning(null);
+          setAiSearchError(null);
+        }}
+        onDismissAiError={() => setAiSearchError(null)}
+        showSuggestions={showSuggestions}
+        setShowSuggestions={setShowSuggestions}
+        isLangMenuOpen={isLangMenuOpen}
+        setIsLangMenuOpen={setIsLangMenuOpen}
+        isUserMenuOpen={isUserMenuOpen}
+        setIsUserMenuOpen={setIsUserMenuOpen}
+        searchContainerRef={searchContainerRef}
+        langMenuRef={langMenuRef}
+        userMenuRef={userMenuRef}
+        user={user}
+        interactions={interactions}
+        onOpenAuth={() => setShowAuthModal(true)}
+        onLogout={async () => {
+          await signOutUser();
+          setUser(null);
+          setInteractions([]);
+        }}
+        onOpenTimeline={() => setShowTimelineModal(true)}
+        onOpenConverter={() => setShowConverterModal(true)}
+        onOpenBestReviews={() => setShowBestReviewsModal(true)}
+        onOpenAddMovie={() => setShowAddModal(true)}
+        onOpenMcp={() => setShowMcpModal(true)}
+        onOpenAdmin={() => {
+          setShowAdminDeleteModal(true);
+          if (!getGoogleDriveAccessToken()) {
+            void connectGoogleDrive().catch(() => {});
+          }
+        }}
+        onOpenUserLists={(tab) => {
+          setUserListsTab(tab);
+          setShowUserListsModal(true);
+        }}
+        onOpenMiniGames={() => setShowMiniGamesModal(true)}
+        onOpenGalaxyView={() => setShowGalaxyView(true)}
+        showMiniGamesModal={showMiniGamesModal}
+      />
 
       <TimelineModal isOpen={showTimelineModal} onClose={() => setShowTimelineModal(false)} movies={databaseMovies} language={appLanguage} />
       <VideoConverter isOpen={showConverterModal} onClose={() => setShowConverterModal(false)} language={appLanguage} />
@@ -875,27 +619,9 @@ export default function App() {
           currentUserEmail={user.email} 
           onClose={() => setShowAdminDeleteModal(false)} 
           onRefresh={refreshData} 
+          language={appLanguage}
         />
       )}
-
-      {/* Floating button for Galaxy View */}
-      <button
-        className="btn btn-dark position-fixed rounded-pill shadow-lg d-flex align-items-center gap-2 border border-info hover-scale side-collapsible-btn"
-        style={{ 
-          left: '16px', 
-          bottom: '24px', 
-          zIndex: 9998, 
-          padding: '8px 16px',
-          boxShadow: '0 4px 20px rgba(0, 200, 255, 0.45)',
-          background: 'rgba(10, 15, 30, 0.95)'
-        }}
-        onClick={() => setShowGalaxyView(true)}
-        title={t.galaxyOfDirectors || "Galáxia de Diretores"}
-        aria-label="Galáxia de Diretores"
-      >
-        <Orbit size={20} className="text-info flex-shrink-0" />
-        <span className="fw-bold text-white small text-nowrap label-text">🌌 {t.galaxyOfDirectors || "Galáxia 3D"}</span>
-      </button>
 
       {showGalaxyView && (
         <GalaxyView 

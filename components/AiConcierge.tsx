@@ -67,15 +67,16 @@ export const AiConcierge: React.FC<AiConciergeProps> = ({ catalog, language }) =
                     });
                 },
             });
-        } catch (error) {
+        } catch (error: any) {
             console.error("Chat Error:", error);
+            const errMsg = error?.message || (language === 'pt' ? 'Erro ao consultar o Assistente IA.' : 'Error communicating with Assistant AI.');
             setMessages(prev => {
                 const updated = [...prev];
                 if (updated.length > 0 && updated[updated.length - 1].role === 'model' && updated[updated.length - 1].text === "") {
-                    updated[updated.length - 1] = { role: 'model', text: "Sorry, I encountered an error. Please try again." };
+                    updated[updated.length - 1] = { role: 'model', text: errMsg };
                     return updated;
                 }
-                return [...updated, { role: 'model', text: "Sorry, I encountered an error. Please try again." }];
+                return [...updated, { role: 'model', text: errMsg }];
             });
         } finally {
             setIsLoading(false);

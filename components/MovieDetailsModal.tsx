@@ -15,7 +15,7 @@ import { ReviewSection } from './ReviewSection';
 import { BestReviewsModal } from './BestReviewsModal';
 import { Movie, AppLanguage, UserMovieInteraction } from '../types';
 import { updateSupabaseMovie } from '../services/supabaseClient';
-import { fetchMovieImages } from '../services/wikidataService';
+import { fetchMovieImages, fetchExtendedWikidataDetails } from '../services/wikidataService';
 import { getAggregatedMovieDetails, AggregatedMovieDetails } from '../services/movieDetailsService';
 import { 
   generateCriticalAnalysis, generateMovieTrivia, generateCriticsSummary, generateCinemaHistory, findDirectorForMovie, findYearForMovie, findLanguageForMovie 
@@ -44,7 +44,7 @@ interface MovieDetailsModalProps {
   onFilterDirector?: (director: string) => void;
 }
 
-type InfoTab = 'overview' | 'technical' | 'trivia' | 'reviews' | 'history' | 'community';
+type InfoTab = 'overview' | 'technical' | 'trivia' | 'reviews' | 'analysis' | 'history' | 'community';
 
 export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
   movie, onClose, language, interactions, onToggleInteraction, onRefresh, isUserLoggedIn, currentUser, onFilterDirector
@@ -76,6 +76,7 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
   const [aiReviews, setAiReviews] = useState('');
   const [aiHistory, setAiHistory] = useState('');
   const [isAiLoading, setIsAiLoading] = useState(false);
+  const [aiTabError, setAiTabError] = useState<string | null>(null);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isExportingCard, setIsExportingCard] = useState(false);
   
@@ -110,6 +111,27 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
       return arr.map(s => String(s).replace(/[\[\]\{\}"]/g, '').trim()).filter(Boolean).join(', ');
   };
 
+  const isUnknownField = (val?: string) => {
+    const lower = (val || '').trim().toLowerCase();
+    return !lower || lower === 'unknown' || lower === 'desconhecido' || lower === 'desconhecida' || lower === 'n/a' || lower === 'none';
+  };
+
+  const [resolvedFallbackDirector, setResolvedFallbackDirector] = useState<string>('');
+
+  useEffect(() => {
+    setResolvedFallbackDirector('');
+  }, [movie.id, movie.director]);
+
+  const effectiveDirector = !isUnknownField(movie.director)
+    ? movie.director
+    : !isUnknownField(details?.director)
+      ? details!.director
+      : details?.producers && details.producers.length > 0
+        ? details.producers.join(', ')
+        : !isUnknownField(resolvedFallbackDirector)
+          ? resolvedFallbackDirector
+          : (movie.director || 'Unknown');
+
   const [formData, setFormData] = useState({
     genres: cleanArrayToString(movie.genres),
     themes: cleanArrayToString(movie.themes),
@@ -136,25 +158,63 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
     syncToWikidata: false
   });
 
-  // Automatic metadata search for missing fields
+  // Resolve director immediately via Wikidata P57 -> fallback P162 (producer) whenever missing/Unknown
+  useEffect(() => {
+    if (!movie || !isUnknownField(movie.director)) return;
+    let cancelled = false;
+
+    const resolveFromWikidata = async () => {
+      try {
+        const wikiDetails = await fetchExtendedWikidataDetails(movie.wikidataId || movie.title);
+        if (cancelled || !wikiDetails) return;
+
+        const wikiDirector =
+          (Array.isArray(wikiDetails.directors) && wikiDetails.directors.length > 0
+            ? wikiDetails.directors.join(', ')
+            : '') ||
+          (Array.isArray(wikiDetails.producers) && wikiDetails.producers.length > 0
+            ? wikiDetails.producers.join(', ')
+            : '');
+
+        if (!isUnknownField(wikiDirector)) {
+          setResolvedFallbackDirector(wikiDirector);
+          setFormData(prev => ({
+            ...prev,
+            director: isUnknownField(prev.director) ? wikiDirector : prev.director,
+            producers: prev.producers || (wikiDetails.producers?.join(', ') || ''),
+          }));
+          if (isUserLoggedIn && movie.wikidataId) {
+            await updateSupabaseMovie(movie.wikidataId, {
+              ...movie,
+              director: wikiDirector,
+            }).catch(() => {});
+            onRefresh();
+          }
+          return;
+        }
+      } catch (e) {
+        console.warn("Wikidata P57/P162 fallback check failed:", e);
+      }
+    };
+
+    resolveFromWikidata();
+    return () => {
+      cancelled = true;
+    };
+  }, [movie.id, movie.wikidataId, movie.director, isUserLoggedIn]);
+
+  // Automatic metadata search for missing fields (when logged in)
   useEffect(() => {
     if (!movie || !isUserLoggedIn) return;
     
     const checkAndSearch = async () => {
-      // Director
-      const currentDirector = movie.director?.toLowerCase();
-      const isDirectorUnknown = !currentDirector || currentDirector === 'unknown' || currentDirector === 'desconhecido' || currentDirector === 'n/a' || currentDirector === 'none';
-      
-      // Year
+      const isDirectorUnknown = isUnknownField(movie.director) && isUnknownField(resolvedFallbackDirector);
       const isYearUnknown = !movie.year || movie.year === 0;
-      
-      // Language
-      const currentLanguage = movie.language?.toLowerCase();
-      const isLanguageUnknown = !currentLanguage || currentLanguage === 'unknown' || currentLanguage === 'desconhecido' || currentLanguage === 'n/a' || currentLanguage === 'none';
+      const isLanguageUnknown = isUnknownField(movie.language);
       
       if (isDirectorUnknown) {
         console.log("Auto-searching director for:", movie.title);
-        handleSearchDirector();
+        handleSearchDirector(true);
       }
       
       if (isYearUnknown) {
@@ -168,10 +228,9 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
       }
     };
     
-    // Small delay to avoid blocking initial render and allow other effects to settle
     const timer = setTimeout(checkAndSearch, 3000);
     return () => clearTimeout(timer);
-  }, [movie.id, isUserLoggedIn]);
+  }, [movie.id, isUserLoggedIn, resolvedFallbackDirector]);
 
   const fixUrl = (url: string) => url ? url.replace('http://', 'https://') : '';
 
@@ -270,12 +329,19 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
   useEffect(() => {
     const loadAiTabContent = async () => {
         if (!showInfoModal) return;
+        setAiTabError(null);
         setIsAiLoading(true);
         try {
-            if (activeTab === 'trivia' && aiTrivia.length === 0) setAiTrivia(await generateMovieTrivia(movie.title, movie.year));
-            else if (activeTab === 'reviews' && !aiReviews) setAiReviews(await generateCriticsSummary(movie.title, movie.year, language));
-            else if (activeTab === 'history' && !aiHistory) setAiHistory(await generateCinemaHistory(movie.title, movie.year, language));
-        } catch (e) { console.error(e); } finally { setIsAiLoading(false); }
+            if (activeTab === 'trivia' && aiTrivia.length === 0) setAiTrivia(await generateMovieTrivia(movie.title, movie.year, language, movie.wikidataId));
+            else if (activeTab === 'reviews' && !aiReviews) setAiReviews(await generateCriticsSummary(movie.title, movie.year, language, movie.wikidataId));
+            else if (activeTab === 'analysis' && !aiAnalysis) setAiAnalysis(await generateCriticalAnalysis(movie.title, movie.year, language, movie.wikidataId));
+            else if (activeTab === 'history' && !aiHistory) setAiHistory(await generateCinemaHistory(movie.title, movie.year, language, movie.wikidataId));
+        } catch (e: any) {
+            console.error(e);
+            setAiTabError(e?.message || 'Erro ao gerar conteúdo com Gemini AI.');
+        } finally {
+            setIsAiLoading(false);
+        }
     };
     loadAiTabContent();
   }, [activeTab, showInfoModal, movie, language]);
@@ -405,7 +471,7 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
       currentY += 10;
       doc.setFontSize(12);
       doc.setFont("helvetica", "normal");
-      doc.text(`${movie.year} | ${movie.director} | ${movie.duration}`, 14, currentY);
+      doc.text(`${movie.year} | ${effectiveDirector} | ${movie.duration}`, 14, currentY);
       currentY += 15;
 
       // Poster Image
@@ -442,7 +508,7 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
       currentY += 7;
       
       const techData = [
-        ["Diretor", movie.director || "N/A"],
+        ["Diretor", effectiveDirector || "N/A"],
         ["Ano", movie.year ? movie.year.toString() : "N/A"],
         ["Duração", movie.duration || "N/A"],
         ["Idioma", movie.language || "N/A"],
@@ -468,9 +534,9 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
       let history = aiHistory;
 
       if (!analysis || !review || !history) {
-        if (!analysis) analysis = await generateCriticalAnalysis(movie.title, movie.year, language);
-        if (!review) review = await generateCriticsSummary(movie.title, movie.year, language);
-        if (!history) history = await generateCinemaHistory(movie.title, movie.year, language);
+        if (!analysis) analysis = await generateCriticalAnalysis(movie.title, movie.year, language, movie.wikidataId);
+        if (!review) review = await generateCriticsSummary(movie.title, movie.year, language, movie.wikidataId);
+        if (!history) history = await generateCinemaHistory(movie.title, movie.year, language, movie.wikidataId);
       }
 
       const renderSection = (title: string, content: string) => {
@@ -527,72 +593,71 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
     setShowWikiModal(true);
   };
 
-  const handleSearchDirector = async () => {
+  const handleSearchDirector = async (silent: boolean = false) => {
     console.log("handleSearchDirector triggered for:", movie.title);
-    const currentDirector = movie.director?.toLowerCase();
-    const isUnknown = !currentDirector || currentDirector === 'unknown' || currentDirector === 'desconhecido' || currentDirector === 'n/a' || currentDirector === 'desconhecida' || currentDirector === 'none';
+    const isUnknown = isUnknownField(effectiveDirector);
     
     if (!isUnknown) {
-      console.log("Director already known:", movie.director);
+      console.log("Director already known:", effectiveDirector);
       return;
     }
     
     setIsSaving(true);
-    // Show a notice that we are searching
-    const searchNotice = document.createElement('div');
-    searchNotice.className = 'position-fixed bottom-0 start-50 translate-middle-x mb-4 bg-info text-white px-4 py-2 rounded-pill shadow-lg animate-bounce';
-    searchNotice.style.zIndex = '9999';
-    searchNotice.innerHTML = `<div class="d-flex align-items-center gap-2"><div class="spinner-border spinner-border-sm"></div> Buscando diretor em bases externas (OMDB, TMDB, IMDb)...</div>`;
-    document.body.appendChild(searchNotice);
+    const searchNotice = silent ? null : document.createElement('div');
+    if (searchNotice) {
+      searchNotice.className = 'position-fixed bottom-0 start-50 translate-middle-x mb-4 bg-info text-white px-4 py-2 rounded-pill shadow-lg animate-bounce';
+      searchNotice.style.zIndex = '9999';
+      searchNotice.innerHTML = `<div class="d-flex align-items-center gap-2"><div class="spinner-border spinner-border-sm"></div> Buscando diretor no Wikidata (P57/P162) e bases externas...</div>`;
+      document.body.appendChild(searchNotice);
+    }
 
     try {
-      console.log("Calling findDirectorForMovie...");
       const startTime = Date.now();
-      const result = await findDirectorForMovie(movie.title, movie.year);
-      console.log("findDirectorForMovie result:", result);
+      let result: { director: string; wikidataId?: string } | null = null;
 
-      // Ensure the notice is visible for at least 1 second for better UX
+      // 1. Tenta Wikidata P57 (director) ou fallback P162 (producer) primeiro
+      const wikiDetails = await fetchExtendedWikidataDetails(movie.wikidataId || movie.title).catch(() => null);
+      const wikiDirector =
+        (wikiDetails?.directors?.length ? wikiDetails.directors.join(', ') : '') ||
+        (wikiDetails?.producers?.length ? wikiDetails.producers.join(', ') : '');
+      if (!isUnknownField(wikiDirector)) {
+        result = { director: wikiDirector };
+      } else {
+        result = await findDirectorForMovie(movie.title, movie.year, movie.wikidataId);
+      }
+
       const elapsed = Date.now() - startTime;
-      if (elapsed < 1000) {
+      if (!silent && elapsed < 1000) {
         await new Promise(resolve => setTimeout(resolve, 1000 - elapsed));
       }
 
       const foundDirector = result?.director;
-      const isFoundUnknown = !foundDirector || foundDirector.toLowerCase() === 'unknown' || foundDirector.toLowerCase() === 'desconhecido' || foundDirector.toLowerCase() === 'n/a' || foundDirector.toLowerCase() === 'none';
+      const isFoundUnknown = isUnknownField(foundDirector);
 
-      if (result && foundDirector && foundDirector.toLowerCase() !== 'n/a') {
-        // Update Supabase
-        console.log("Updating Supabase with director:", result.director);
+      if (result && foundDirector && !isFoundUnknown) {
+        setResolvedFallbackDirector(foundDirector);
         if (movie.wikidataId) {
           await updateSupabaseMovie(movie.wikidataId, {
             ...movie,
             director: result.director,
             directorId: result.wikidataId || movie.directorId
           });
-        } else {
-          console.error("Cannot update movie: wikidataId is missing.");
-          alert("Erro: wikidataId não encontrado para esta produção.");
-          return;
+          onRefresh();
         }
-        
-        // Refresh UI
-        onRefresh();
-        if (isFoundUnknown) {
-          alert("Não foi possível encontrar o diretor para esta produção visual nas bases externas. O diretor foi salvo como 'Unknown'.");
-        } else {
-          alert(`Diretor encontrado: ${result.director}${result.wikidataId ? ` (${result.wikidataId})` : ''}. Informações salvas.`);
+        if (!silent) {
+          alert(`Diretor/Produtor encontrado: ${result.director}${result.wikidataId ? ` (${result.wikidataId})` : ''}. Informações salvas.`);
         }
-      } else {
-        console.log("Director not found in any API.");
-        alert("Não foi possível encontrar o diretor para esta produção visual nas bases externas.");
+      } else if (!silent) {
+        alert("Não foi possível encontrar o diretor ou produtor para esta produção visual nas bases externas.");
       }
     } catch (error) {
       console.error("Error searching director:", error);
-      alert("Erro ao pesquisar diretor: " + (error instanceof Error ? error.message : String(error)));
+      if (!silent) {
+        alert("Erro ao pesquisar diretor: " + (error instanceof Error ? error.message : String(error)));
+      }
     } finally {
       setIsSaving(false);
-      console.log("Search finished, removing notice.");
-      if (searchNotice.parentNode) document.body.removeChild(searchNotice);
+      if (searchNotice && searchNotice.parentNode) document.body.removeChild(searchNotice);
     }
   };
 
@@ -616,7 +681,7 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
     try {
       console.log("Calling findYearForMovie...");
       const startTime = Date.now();
-      const result = await findYearForMovie(movie.title);
+      const result = await findYearForMovie(movie.title, movie.wikidataId);
       console.log("findYearForMovie result:", result);
 
       const elapsed = Date.now() - startTime;
@@ -673,7 +738,7 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
     try {
       console.log("Calling findLanguageForMovie...");
       const startTime = Date.now();
-      const result = await findLanguageForMovie(movie.title);
+      const result = await findLanguageForMovie(movie.title, movie.wikidataId);
       console.log("findLanguageForMovie result:", result);
 
       const elapsed = Date.now() - startTime;
@@ -891,6 +956,7 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
                             { id: 'technical', label: t.tabTechnical, icon: <Award size={16}/> },
                             { id: 'trivia', label: t.tabTrivia, icon: <BookOpen size={16}/> },
                             { id: 'reviews', label: t.tabReviews, icon: <Star size={16}/> },
+                            { id: 'analysis', label: t.tabAnalysis || 'Análise IA', icon: <Sparkles size={16}/> },
                             { id: 'community', label: t.community, icon: <MessageSquare size={16}/> },
                             { id: 'history', label: t.tabHistory, icon: <History size={16}/> }
                         ].map(tab => (
@@ -944,15 +1010,15 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
                                                         <span className="opacity-50">{t.director}</span>
                                                         <div className="d-flex align-items-center gap-2 text-end">
                                                             <button 
-                                                                onClick={() => handleOpenWiki(movie.director)}
+                                                                onClick={() => handleOpenWiki(effectiveDirector)}
                                                                 className="btn btn-link p-0 text-info text-decoration-none hover-underline"
                                                             >
-                                                                {movie.director}
+                                                                {effectiveDirector}
                                                             </button>
-                                                            {(!movie.director || movie.director.toLowerCase() === 'unknown' || movie.director.toLowerCase() === 'desconhecido' || movie.director.toLowerCase() === 'n/a' || movie.director.toLowerCase() === 'desconhecida' || movie.director.toLowerCase() === 'none') && (
+                                                            {isUnknownField(effectiveDirector) && (
                                                               <button 
                                                                 className="btn btn-sm btn-outline-info p-1 py-0 xsmall"
-                                                                onClick={handleSearchDirector}
+                                                                onClick={() => handleSearchDirector(false)}
                                                                 title={t.searchDirector}
                                                               >
                                                                 <Search size={12} />
@@ -1104,16 +1170,20 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
                                         </div>
                                     </div>
                                 )}
-                                {(activeTab === 'reviews' || activeTab === 'history') && (
+                                {(activeTab === 'reviews' || activeTab === 'analysis' || activeTab === 'history') && (
                                     <div className="bg-black bg-opacity-25 p-4 p-lg-5 rounded border border-secondary shadow">
-                                        {isAiLoading ? <Loader2 className="animate-spin text-danger mx-auto" size={32} /> : (
-                                            <div className="lh-lg markdown-content" dangerouslySetInnerHTML={{ __html: (activeTab === 'reviews' ? aiReviews : aiHistory).replace(/\*\*(.*?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br/>') }} />
+                                        {isAiLoading ? <Loader2 className="animate-spin text-danger mx-auto" size={32} /> : aiTabError ? (
+                                            <div className="alert alert-danger mb-0">{aiTabError}</div>
+                                        ) : (
+                                            <div className="lh-lg markdown-content" dangerouslySetInnerHTML={{ __html: (activeTab === 'reviews' ? aiReviews : activeTab === 'analysis' ? aiAnalysis : aiHistory).replace(/\*\*(.*?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br/>') }} />
                                         )}
                                     </div>
                                 )}
                                 {activeTab === 'trivia' && (
                                     <div className="row g-3">
-                                        {isAiLoading ? <Loader2 className="animate-spin text-danger mx-auto" /> : aiTrivia.map((t, i) => (
+                                        {isAiLoading ? <Loader2 className="animate-spin text-danger mx-auto" /> : aiTabError ? (
+                                            <div className="col-12"><div className="alert alert-danger mb-0">{aiTabError}</div></div>
+                                        ) : aiTrivia.map((t, i) => (
                                             <div key={i} className="col-md-6"><div className="bg-dark p-4 rounded border border-secondary border-start border-start-danger shadow-sm h-100" style={{ borderLeftWidth: '5px' }}> <BookOpen size={16} className="text-danger mb-2"/> <p className="m-0 small">{t}</p></div></div>
                                         ))}
                                     </div>
@@ -1451,15 +1521,15 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
                               <dd className="col-8 text-white mb-3">
                                 <div className="d-flex align-items-center gap-2">
                                   <button 
-                                      onClick={() => handleOpenWiki(movie.director)}
+                                      onClick={() => handleOpenWiki(effectiveDirector)}
                                       className="btn btn-link p-0 text-info text-decoration-none hover-underline text-start"
                                   >
-                                      {movie.director}
+                                      {effectiveDirector}
                                   </button>
-                                  {(!movie.director || movie.director.toLowerCase() === 'unknown' || movie.director.toLowerCase() === 'desconhecido' || movie.director.toLowerCase() === 'n/a' || movie.director.toLowerCase() === 'desconhecida' || movie.director.toLowerCase() === 'none') && (
+                                  {isUnknownField(effectiveDirector) && (
                                     <button 
                                       className="btn btn-sm btn-outline-info p-1 py-0 xsmall"
-                                      onClick={handleSearchDirector}
+                                      onClick={() => handleSearchDirector(false)}
                                       title={t.searchDirector}
                                     >
                                       <Search size={12} />
@@ -1592,7 +1662,7 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
           <div className="d-flex flex-column gap-3">
             <div className="d-flex align-items-center gap-2 text-secondary">
               <User size={20} className="text-danger" />
-              <span className="fw-bold fs-5 text-white">{movie.director}</span>
+              <span className="fw-bold fs-5 text-white">{effectiveDirector}</span>
             </div>
             <p className="text-light fst-italic lh-base" style={{ fontSize: '1.1rem', display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
               "{movie.descriptionPt || movie.description}"

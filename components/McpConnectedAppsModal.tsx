@@ -9,10 +9,9 @@ import {
   getOAuth21Session, 
   saveOAuth21Session, 
   clearOAuth21Session, 
-  authorizeOAuth21Demo, 
-  initiateOAuth21Login, 
   OAuth21Session 
 } from '../services/oauth21Service';
+import { connectGoogleDrive, clearGoogleDriveAccessToken } from '../firebase';
 import { 
   getGoogleConnectedAppConfig, 
   updateGoogleConnectedAppConfig, 
@@ -102,21 +101,34 @@ export const McpConnectedAppsModal: React.FC<McpConnectedAppsModalProps> = ({
 
   const handleOAuth21Connect = async () => {
     try {
-      // In sandbox/preview environment, activate authorized OAuth 2.1 session
-      const newSession = authorizeOAuth21Demo('liclopes@gmail.com');
+      const { user, accessToken } = await connectGoogleDrive();
+      const newSession = saveOAuth21Session({
+        isAuthenticated: true,
+        accessToken,
+        idToken: null,
+        expiresAt: Date.now() + 50 * 60 * 1000,
+        userProfile: {
+          email: user?.email || undefined,
+          name: user?.displayName || user?.email?.split('@')[0],
+          picture: user?.photoURL || undefined,
+          sub: user?.uid
+        },
+        connectedAppStatus: 'connected'
+      });
       setSession(newSession);
       updateGoogleConnectedAppConfig({ status: 'connected' });
-      setConnectionStatusMessage(isPt ? 'Conectado com sucesso via Google OAuth 2.1 com PKCE S256!' : 'Connected successfully via Google OAuth 2.1 with PKCE S256!');
+      setConnectionStatusMessage(isPt ? 'Conectado com sucesso via Google OAuth!' : 'Connected successfully via Google OAuth!');
     } catch (e: any) {
-      alert("Erro na conexão: " + e.message);
+      setConnectionStatusMessage((isPt ? 'Erro na conexão Google OAuth: ' : 'Google OAuth connection error: ') + (e.message || 'Falha desconhecida'));
     }
   };
 
   const handleOAuth21Disconnect = () => {
+    clearGoogleDriveAccessToken();
     clearOAuth21Session();
     setSession(getOAuth21Session());
     updateGoogleConnectedAppConfig({ status: 'disconnected' });
-    setConnectionStatusMessage(isPt ? 'Sessão OAuth 2.1 desconectada.' : 'OAuth 2.1 session disconnected.');
+    setConnectionStatusMessage(isPt ? 'Sessão OAuth desconectada.' : 'OAuth session disconnected.');
   };
 
   return (

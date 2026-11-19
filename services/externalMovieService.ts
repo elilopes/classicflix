@@ -1,5 +1,7 @@
 
 /// <reference types="vite/client" />
+import { fetchRottenTomatoesData } from './rottenTomatoesService';
+
 export interface ExternalRatings {
   imdb?: string;
   rottenTomatoes?: string;
@@ -15,9 +17,9 @@ export interface ExternalMovieData {
   tagline?: string;
 }
 
-const OMDB_KEY = import.meta.env.VITE_OMDB_KEY;
-const TMDB_KEY = import.meta.env.VITE_TMDB_API_KEY;
-const RAPID_KEY = import.meta.env.VITE_RAPID_API_KEY;
+const OMDB_KEY = import.meta.env.VITE_OMDB_KEY || 'dc3946fe';
+const TMDB_KEY = import.meta.env.VITE_TMDB_API_KEY || 'e6a44aa8865934c03ad582bc72c5b85d';
+const RAPID_KEY = import.meta.env.VITE_RAPID_API_KEY || '8d0b2005e5msh7794ca50aee0eb4p14f460jsn249cb3b9d70b';
 
 /**
  * Fetches movie data from OMDB API
@@ -57,19 +59,15 @@ export async function fetchTMDBData(title: string, year?: string, language: stri
  * Fetches ratings from Rotten Tomatoes via RapidAPI
  */
 export async function fetchRottenTomatoesRating(title: string): Promise<string | null> {
-  const host = import.meta.env.VITE_RAPID_API_HOST_ROTTEN;
+  const host = import.meta.env.VITE_RAPID_API_HOST_ROTTEN || 'rottentomato.p.rapidapi.com';
   if (!RAPID_KEY || !host) return null;
 
   try {
-    const response = await fetch(`https://${host}/search?q=${encodeURIComponent(title)}`, {
-      headers: {
-        'x-rapidapi-key': RAPID_KEY,
-        'x-rapidapi-host': host
-      }
-    });
-    const data = await response.json();
-    // Logic to extract rating depends on the specific API response structure
-    return data?.rating || null;
+    const rtData = await fetchRottenTomatoesData(title);
+    if (rtData?.tomatometer !== undefined && rtData.tomatometer !== null) {
+      return `${rtData.tomatometer}%`;
+    }
+    return null;
   } catch (error) {
     console.error('Error fetching RT rating:', error);
     return null;
@@ -77,49 +75,7 @@ export async function fetchRottenTomatoesRating(title: string): Promise<string |
 }
 
 /**
- * Fetches cinematic data from Cinema API via RapidAPI
- */
-export async function fetchCinemaData(title: string): Promise<any> {
-  const host = import.meta.env.VITE_RAPID_API_HOST_CINEMA;
-  if (!RAPID_KEY || !host) return null;
-
-  try {
-    const response = await fetch(`https://${host}/search?query=${encodeURIComponent(title)}`, {
-      headers: {
-        'x-rapidapi-key': RAPID_KEY,
-        'x-rapidapi-host': host
-      }
-    });
-    return await response.json();
-  } catch (error) {
-    console.error('Error fetching Cinema data:', error);
-    return null;
-  }
-}
-
-/**
- * Fetches data from Sora Cinematic API via RapidAPI
- */
-export async function fetchSoraCinematicData(title: string): Promise<any> {
-  const host = import.meta.env.VITE_RAPID_API_HOST_SORA;
-  if (!RAPID_KEY || !host) return null;
-
-  try {
-    const response = await fetch(`https://${host}/generate?prompt=${encodeURIComponent(`Cinematic details for ${title}`)}`, {
-      headers: {
-        'x-rapidapi-key': RAPID_KEY,
-        'x-rapidapi-host': host
-      }
-    });
-    return await response.json();
-  } catch (error) {
-    console.error('Error fetching Sora data:', error);
-    return null;
-  }
-}
-
-/**
- * Aggregates data from multiple external sources
+ * Aggregates data from multiple external sources (OMDB, TMDB, Rotten Tomatoes RapidAPI)
  */
 export async function getAggregatedMovieData(title: string, year?: string, language: string = 'en'): Promise<ExternalMovieData> {
   const [omdb, tmdb] = await Promise.all([
@@ -130,13 +86,22 @@ export async function getAggregatedMovieData(title: string, year?: string, langu
   const ratings: ExternalRatings = {};
 
   if (omdb && omdb.Response !== 'False') {
-    ratings.imdb = omdb.imdbRating;
+    if (omdb.imdbRating && omdb.imdbRating !== 'N/A') {
+      ratings.imdb = omdb.imdbRating;
+    }
     const rtRating = omdb.Ratings?.find((r: any) => r.Source === 'Rotten Tomatoes');
-    if (rtRating) ratings.rottenTomatoes = rtRating.Value;
-    ratings.metacritic = omdb.Metascore;
+    if (rtRating?.Value) ratings.rottenTomatoes = rtRating.Value;
+    if (omdb.Metascore && omdb.Metascore !== 'N/A') {
+      ratings.metacritic = omdb.Metascore;
+    }
   }
 
-  if (tmdb) {
+  if (!ratings.rottenTomatoes) {
+    const rtFallback = await fetchRottenTomatoesRating(title);
+    if (rtFallback) ratings.rottenTomatoes = rtFallback;
+  }
+
+  if (tmdb?.vote_average) {
     ratings.tmdb = tmdb.vote_average;
   }
 

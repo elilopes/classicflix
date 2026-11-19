@@ -21,6 +21,7 @@ import WBEdit from 'wikibase-edit';
 import { Server as SocketIOServer } from "socket.io";
 import { setupGameSockets } from "./server/gameSockets.ts";
 import { createGeminiRouter } from "./server/geminiRoutes.ts";
+import { createTranslateRouter } from "./server/translateRoutes.ts";
 
 import { GoogleAuth } from "google-auth-library";
 import { google } from "googleapis";
@@ -38,17 +39,201 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 let wbEditInstance: any = null;
 
 const getWbEdit = () => {
+  const user = process.env.WIKIDATA_BOT_USER || '';
+  const pass = process.env.WIKIDATA_BOT_PASS || '';
+  if (!user || !pass) {
+    throw new Error('Credenciais do Bot Wikidata (WIKIDATA_BOT_USER / WIKIDATA_BOT_PASS) não estão configuradas no servidor.');
+  }
   if (!wbEditInstance) {
     wbEditInstance = WBEdit({
       instance: 'https://www.wikidata.org',
       credentials: {
-        username: process.env.WIKIDATA_BOT_USER || '',
-        password: process.env.WIKIDATA_BOT_PASS || ''
+        username: user,
+        password: pass
       },
       userAgent: 'ClassicFlix-App/1.0'
     });
   }
   return wbEditInstance;
+};
+
+const WIKI_OAUTH_COOKIE = 'classicflix_wiki_oauth';
+
+interface WikiOAuthCookieSession {
+  accessToken: string;
+  refreshToken?: string;
+  username?: string;
+  expiresAt?: number;
+}
+
+const parseCookies = (cookieHeader?: string): Record<string, string> => {
+  const cookies: Record<string, string> = {};
+  if (!cookieHeader) return cookies;
+  for (const part of cookieHeader.split(';')) {
+    const idx = part.indexOf('=');
+    if (idx === -1) continue;
+    const key = part.slice(0, idx).trim();
+    const val = part.slice(idx + 1).trim();
+    if (key) {
+      try {
+        cookies[key] = decodeURIComponent(val);
+      } catch {
+        cookies[key] = val;
+      }
+    }
+  }
+  return cookies;
+};
+
+const getWikiSessionCookie = (req: express.Request): WikiOAuthCookieSession | null => {
+  const cookies = parseCookies(req.headers.cookie);
+  const raw = cookies[WIKI_OAUTH_COOKIE];
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(raw, 'base64url').toString('utf-8')) as WikiOAuthCookieSession;
+    if (!parsed?.accessToken) return null;
+    if (parsed.expiresAt && Date.now() >= parsed.expiresAt) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+};
+
+const buildWikidataClaimStatement = (property: string, value: any) => {
+  if (typeof value === 'object' && value !== null && 'text' in value) {
+    return {
+      mainsnak: {
+        snaktype: 'value',
+        property,
+        datavalue: {
+          type: 'monolingualtext',
+          value: { text: String(value.text), language: String(value.language || 'pt') }
+        }
+      },
+      type: 'statement',
+      rank: 'normal'
+    };
+  }
+  const strVal = String(value).trim();
+  if (/^Q\d+$/i.test(strVal)) {
+    const numericId = Number(strVal.replace(/^Q/i, ''));
+    return {
+      mainsnak: {
+        snaktype: 'value',
+        property,
+        datavalue: {
+          type: 'wikibase-entityid',
+          value: { 'entity-type': 'item', 'numeric-id': numericId, id: strVal.toUpperCase() }
+        }
+      },
+      type: 'statement',
+      rank: 'normal'
+    };
+  }
+  if (property === 'P577' && /^\d{4}$/.test(strVal)) {
+    return {
+      mainsnak: {
+        snaktype: 'value',
+        property,
+        datavalue: {
+          type: 'time',
+          value: {
+            time: `+${strVal}-00-00T00:00:00Z`,
+            timezone: 0,
+            before: 0,
+            after: 0,
+            precision: 9,
+            calendarmodel: 'http://www.wikidata.org/entity/Q1985727'
+          }
+        }
+      },
+      type: 'statement',
+      rank: 'normal'
+    };
+  }
+  return {
+    mainsnak: {
+      snaktype: 'value',
+      property,
+      datavalue: {
+        type: 'string',
+        value: strVal
+      }
+    },
+    type: 'statement',
+    rank: 'normal'
+  };
+};
+
+const editWikidataWithOAuth = async (params: {
+  qid?: string;
+  labels?: Record<string, string>;
+  descriptions?: Record<string, string>;
+  claims?: Record<string, any>;
+  summary: string;
+  accessToken: string;
+}): Promise<{ id: string }> => {
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${params.accessToken}`,
+    'User-Agent': 'ClassicFlix-App/1.0 (https://classicflix.app; mailto:liclopes@gmail.com)'
+  };
+
+  const tokenRes = await fetch('https://www.wikidata.org/w/api.php?action=query&meta=tokens&format=json', { headers });
+  const tokenJson: any = await tokenRes.json().catch(() => ({}));
+  if (!tokenRes.ok || tokenJson?.error || !tokenJson?.query?.tokens?.csrftoken) {
+    const errMsg = tokenJson?.error?.info || tokenJson?.message || 'Token OAuth da Wikipedia inválido ou expirado. Conecte novamente via OAuth.';
+    throw new Error(errMsg);
+  }
+  const csrfToken = tokenJson.query.tokens.csrftoken;
+
+  const entityData: any = {};
+  if (params.labels && Object.keys(params.labels).length > 0) {
+    entityData.labels = {};
+    for (const [lang, value] of Object.entries(params.labels)) {
+      if (value) entityData.labels[lang] = { language: lang, value };
+    }
+  }
+  if (params.descriptions && Object.keys(params.descriptions).length > 0) {
+    entityData.descriptions = {};
+    for (const [lang, value] of Object.entries(params.descriptions)) {
+      if (value) entityData.descriptions[lang] = { language: lang, value };
+    }
+  }
+  if (params.claims && Object.keys(params.claims).length > 0) {
+    entityData.claims = {};
+    for (const [prop, val] of Object.entries(params.claims)) {
+      if (val !== undefined && val !== null && val !== '') {
+        entityData.claims[prop] = [buildWikidataClaimStatement(prop, val)];
+      }
+    }
+  }
+
+  const form = new URLSearchParams({
+    action: 'wbeditentity',
+    format: 'json',
+    summary: params.summary,
+    data: JSON.stringify(entityData),
+    token: csrfToken
+  });
+  if (params.qid) {
+    form.set('id', params.qid);
+  } else {
+    form.set('new', 'item');
+  }
+
+  const editRes = await fetch('https://www.wikidata.org/w/api.php', {
+    method: 'POST',
+    headers: {
+      ...headers,
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    body: form.toString()
+  });
+  const editJson: any = await editRes.json().catch(() => ({}));
+  if (!editRes.ok || editJson?.error || !editJson?.entity?.id) {
+    throw new Error(editJson?.error?.info || editJson?.message || 'Falha ao enviar edição via Wikimedia OAuth API');
+  }
+  return { id: editJson.entity.id };
 };
 
 async function startServer() {
@@ -59,6 +244,7 @@ async function startServer() {
   app.use(express.json({ limit: "10mb" }));
 
   app.use("/api/gemini", createGeminiRouter());
+  app.use("/api/translate", createTranslateRouter());
 
   // API route to toggle like
   app.post("/api/toggle-like", async (req, res) => {
@@ -93,8 +279,10 @@ async function startServer() {
       return res.status(400).json({ error: "Label e Descrição são obrigatórios para criar no Wikidata" });
     }
 
+    const cookieSession = getWikiSessionCookie(req);
+    const effectiveUser = wikiUsername || cookieSession?.username;
     const summary = editMethod === 'oauth'
-      ? (wikiUsername ? `Criado por [[User:${wikiUsername}|${wikiUsername}]] via ClassicFlix (OAuth Wikipedia)` : 'Criado via ClassicFlix (OAuth Wikipedia)')
+      ? (effectiveUser ? `Criado por [[User:${effectiveUser}|${effectiveUser}]] via ClassicFlix (OAuth Wikipedia)` : 'Criado via ClassicFlix (OAuth Wikipedia)')
       : 'Criado via ClassicFlix Bot';
 
     try {
@@ -109,6 +297,29 @@ async function startServer() {
       if (country) claims.P495 = country;
       if (cinematography) claims.P344 = cinematography;
       if (distribution) claims.P750 = distribution;
+
+      if (editMethod === 'oauth') {
+        const oauthToken = userToken || cookieSession?.accessToken;
+        if (!oauthToken) {
+          return res.status(401).json({
+            error: "Sessão OAuth 2.0 da Wikipedia ausente ou expirada. Faça login via OAuth Wikipedia antes de criar com OAuth.",
+            editMethod
+          });
+        }
+        const oauthResult = await editWikidataWithOAuth({
+          labels: { [language]: label },
+          descriptions: { [language]: description },
+          claims,
+          summary,
+          accessToken: oauthToken
+        });
+        return res.json({
+          success: true,
+          qid: oauthResult.id,
+          editMethod,
+          summary
+        });
+      }
 
       const createObj: any = {
         labels: { [language]: label },
@@ -390,8 +601,10 @@ async function startServer() {
       return res.status(400).json({ error: "ID do Wikidata é obrigatório" });
     }
 
+    const cookieSession = getWikiSessionCookie(req);
+    const effectiveUser = wikiUsername || cookieSession?.username;
     const summary = editMethod === 'oauth'
-      ? (wikiUsername ? `Editado por [[User:${wikiUsername}|${wikiUsername}]] via ClassicFlix (OAuth Wikipedia)` : 'Editado via ClassicFlix (OAuth Wikipedia)')
+      ? (effectiveUser ? `Editado por [[User:${effectiveUser}|${effectiveUser}]] via ClassicFlix (OAuth Wikipedia)` : 'Editado via ClassicFlix (OAuth Wikipedia)')
       : 'Editado via ClassicFlix Bot';
 
     try {
@@ -404,6 +617,30 @@ async function startServer() {
       if (country) claims.P495 = country;
       if (cinematography) claims.P344 = cinematography;
       if (distribution) claims.P750 = distribution;
+
+      if (editMethod === 'oauth') {
+        const oauthToken = userToken || cookieSession?.accessToken;
+        if (!oauthToken) {
+          return res.status(401).json({
+            error: "Sessão OAuth 2.0 da Wikipedia ausente ou expirada. Faça login via OAuth Wikipedia antes de editar com OAuth.",
+            editMethod
+          });
+        }
+        const oauthResult = await editWikidataWithOAuth({
+          qid: id,
+          labels: label ? { [language]: label } : undefined,
+          descriptions: description ? { [language]: description } : undefined,
+          claims,
+          summary,
+          accessToken: oauthToken
+        });
+        return res.json({
+          success: true,
+          qid: oauthResult.id || id,
+          editMethod,
+          summary
+        });
+      }
 
       const editObj: any = {
         id: id,
@@ -540,22 +777,90 @@ async function startServer() {
 
   // --- Wikipedia / Wikimedia OAuth 2.0 Integration ---
   const getAppBaseUrl = (req?: express.Request): string => {
-    if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, "");
     if (req) {
-      const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'http';
+      const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || 'https';
       const host = (req.headers['x-forwarded-host'] as string) || req.get('host');
-      if (host) return `${proto}://${host}`;
+      if (host && !host.startsWith('0.0.0.0')) return `${proto}://${host}`.replace(/\/$/, "");
     }
+    if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, "");
     return "";
   };
+
+  const getWikiCallbackUrls = (req?: express.Request) => {
+    const base = process.env.APP_URL?.replace(/\/$/, "") || getAppBaseUrl(req);
+    const defaultDev = "https://ais-dev-rketbkfc2ioywj5ptq55cf-18401513977.us-west1.run.app/auth/wikipedia/callback";
+    const defaultShared = "https://ais-pre-rketbkfc2ioywj5ptq55cf-18401513977.us-west1.run.app/auth/wikipedia/callback";
+    if (base && base.includes("ais-dev-")) {
+      return {
+        devCallbackUrl: `${base}/auth/wikipedia/callback`,
+        sharedCallbackUrl: `${base.replace("ais-dev-", "ais-pre-")}/auth/wikipedia/callback`
+      };
+    }
+    if (base && base.includes("ais-pre-")) {
+      return {
+        devCallbackUrl: `${base.replace("ais-pre-", "ais-dev-")}/auth/wikipedia/callback`,
+        sharedCallbackUrl: `${base}/auth/wikipedia/callback`
+      };
+    }
+    return {
+      devCallbackUrl: defaultDev,
+      sharedCallbackUrl: defaultShared
+    };
+  };
+
+  const isValidWikiCallbackUrl = (candidate?: string): boolean => {
+    if (!candidate) return false;
+    try {
+      const parsed = new URL(candidate);
+      return (
+        (parsed.hostname.endsWith('.run.app') || parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1') &&
+        parsed.pathname.replace(/\/$/, '') === '/auth/wikipedia/callback'
+      );
+    } catch {
+      return false;
+    }
+  };
+
+  // Endpoint to inspect Wikimedia OAuth 2.0 configuration and HTTP-only session status
+  app.get("/api/auth/wikipedia/status", (req, res) => {
+    const hasClientId = Boolean(process.env.WIKIPEDIA_CLIENT_ID);
+    const hasClientSecret = Boolean(process.env.WIKIPEDIA_CLIENT_SECRET);
+    const session = getWikiSessionCookie(req);
+    const { devCallbackUrl, sharedCallbackUrl } = getWikiCallbackUrls(req);
+
+    res.json({
+      configured: hasClientId && hasClientSecret,
+      hasClientId,
+      hasClientSecret,
+      authenticated: Boolean(session?.accessToken),
+      username: session?.username || null,
+      setupUrl: "https://meta.wikimedia.org/wiki/Special:OAuthConsumerRegistration/propose",
+      devCallbackUrl,
+      sharedCallbackUrl
+    });
+  });
+
+  // Endpoint to clear Wikimedia OAuth cookie session
+  app.post("/api/auth/wikipedia/logout", (_req, res) => {
+    res.clearCookie(WIKI_OAUTH_COOKIE, {
+      httpOnly: true,
+      secure: true,
+      sameSite: 'none',
+      path: '/'
+    });
+    res.json({ success: true });
+  });
 
   // Endpoint to get Wikipedia authorization URL
   app.get("/api/auth/wikipedia/url", (req, res) => {
     const appUrl = getAppBaseUrl(req);
-    const redirectUri = (req.query.redirect_uri as string) || `${appUrl}/auth/wikipedia/callback`;
+    const requestedRedirect = typeof req.query.redirect_uri === 'string' ? req.query.redirect_uri : '';
+    const redirectUri = isValidWikiCallbackUrl(requestedRedirect) ? requestedRedirect : `${appUrl}/auth/wikipedia/callback`;
     const clientId = process.env.WIKIPEDIA_CLIENT_ID;
+    const hasClientSecret = Boolean(process.env.WIKIPEDIA_CLIENT_SECRET);
+    const { devCallbackUrl, sharedCallbackUrl } = getWikiCallbackUrls(req);
 
-    if (clientId) {
+    if (clientId && hasClientSecret) {
       const stateObj = { t: Date.now(), redirectUri };
       const state = Buffer.from(JSON.stringify(stateObj)).toString("base64url");
       const params = new URLSearchParams({
@@ -567,20 +872,28 @@ async function startServer() {
       const authUrl = `https://meta.wikimedia.org/w/rest.php/oauth2/authorize?${params.toString()}`;
       return res.json({
         configured: true,
+        hasClientId: true,
+        hasClientSecret: true,
         url: authUrl,
         redirectUri,
-        clientId
+        clientId,
+        setupUrl: "https://meta.wikimedia.org/wiki/Special:OAuthConsumerRegistration/propose",
+        devCallbackUrl,
+        sharedCallbackUrl
       });
     }
 
-    // If client ID is not configured, inform client and provide registration guides
     res.json({
       configured: false,
-      message: "WIKIPEDIA_CLIENT_ID não configurado.",
+      hasClientId: Boolean(clientId),
+      hasClientSecret,
+      message: !clientId
+        ? "WIKIPEDIA_CLIENT_ID não configurado nos Secrets."
+        : "WIKIPEDIA_CLIENT_SECRET não configurado nos Secrets.",
       setupUrl: "https://meta.wikimedia.org/wiki/Special:OAuthConsumerRegistration/propose",
       redirectUri,
-      devCallbackUrl: `${appUrl}/auth/wikipedia/callback`,
-      sharedCallbackUrl: `${appUrl}/auth/wikipedia/callback`
+      devCallbackUrl,
+      sharedCallbackUrl
     });
   });
 
@@ -706,16 +1019,31 @@ async function startServer() {
     const clientId = process.env.WIKIPEDIA_CLIENT_ID;
     const clientSecret = process.env.WIKIPEDIA_CLIENT_SECRET;
     const appUrl = getAppBaseUrl(req);
-    const redirectUri = `${appUrl}/auth/wikipedia/callback`;
+    let redirectUri = `${appUrl}/auth/wikipedia/callback`;
+
+    if (typeof req.query.state === 'string' && req.query.state) {
+      try {
+        const parsedState = JSON.parse(Buffer.from(req.query.state, 'base64url').toString('utf-8'));
+        if (isValidWikiCallbackUrl(parsedState?.redirectUri)) {
+          redirectUri = parsedState.redirectUri;
+        }
+      } catch {
+        // ignore invalid state, fallback to request origin callback URL
+      }
+    }
 
     try {
+      if (!clientId || !clientSecret) {
+        throw new Error("WIKIPEDIA_CLIENT_ID ou WIKIPEDIA_CLIENT_SECRET não configurados no servidor.");
+      }
+
       // Exchange code for token with Wikimedia
       const tokenBody = new URLSearchParams({
         grant_type: "authorization_code",
         code: String(code),
         redirect_uri: redirectUri,
-        client_id: clientId || "",
-        client_secret: clientSecret || ""
+        client_id: clientId,
+        client_secret: clientSecret
       });
 
       const tokenRes = await fetch("https://meta.wikimedia.org/w/rest.php/oauth2/access_token", {
@@ -729,7 +1057,7 @@ async function startServer() {
 
       const tokenData = await tokenRes.json();
       if (!tokenRes.ok || !tokenData.access_token) {
-        throw new Error(tokenData.message || tokenData.error || "Falha ao obter token de acesso da Wikimedia");
+        throw new Error(tokenData.message || tokenData.error_description || tokenData.error || "Falha ao obter token de acesso da Wikimedia");
       }
 
       // Fetch user profile from Wikimedia
@@ -744,6 +1072,25 @@ async function startServer() {
       const wikiUsername = profile.username || "Usuário Wikipedia";
       const wikiId = `wiki_${profile.sub || wikiUsername.toLowerCase().replace(/[^a-z0-9]/g, "_")}`;
       const wikiEmail = profile.email || `${wikiUsername.toLowerCase().replace(/[^a-z0-9]/g, "")}@wikipedia.org`;
+      const expiresInMs = (Number(tokenData.expires_in) || 14400) * 1000;
+
+      const cookiePayload: WikiOAuthCookieSession = {
+        accessToken: tokenData.access_token,
+        refreshToken: tokenData.refresh_token,
+        username: wikiUsername,
+        expiresAt: Date.now() + expiresInMs
+      };
+      res.cookie(
+        WIKI_OAUTH_COOKIE,
+        Buffer.from(JSON.stringify(cookiePayload)).toString('base64url'),
+        {
+          httpOnly: true,
+          secure: true,
+          sameSite: 'none',
+          path: '/',
+          maxAge: expiresInMs
+        }
+      );
 
       const wikiUser = {
         id: wikiId,
@@ -761,7 +1108,8 @@ async function startServer() {
           registered: profile.registered,
           groups: profile.groups
         },
-        accessToken: tokenData.access_token
+        accessToken: tokenData.access_token,
+        expiresIn: Number(tokenData.expires_in) || 14400
       };
 
       res.send(`

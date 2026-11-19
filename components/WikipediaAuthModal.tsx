@@ -1,7 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, ExternalLink, Loader2, KeyRound, CheckCircle, UserCheck } from 'lucide-react';
-import { verifyWikipediaUser, WikipediaUser, saveWikipediaUser } from '../services/wikipediaAuthService';
+import { X, ExternalLink, Loader2, KeyRound, CheckCircle, UserCheck, ShieldCheck } from 'lucide-react';
+import {
+  verifyWikipediaUser,
+  WikipediaUser,
+  saveWikipediaUser,
+  getWikipediaAuthUrl,
+  getWikipediaOAuthStatus,
+  WikipediaOAuthStatus
+} from '../services/wikipediaAuthService';
 import { AppLanguage } from '../types';
 
 interface WikipediaAuthModalProps {
@@ -11,6 +18,9 @@ interface WikipediaAuthModalProps {
   appLanguage?: AppLanguage;
   authUrlData?: {
     configured: boolean;
+    hasClientId?: boolean;
+    hasClientSecret?: boolean;
+    url?: string;
     setupUrl?: string;
     redirectUri?: string;
     devCallbackUrl?: string;
@@ -27,13 +37,70 @@ export const WikipediaAuthModal: React.FC<WikipediaAuthModalProps> = ({
 }) => {
   const [usernameInput, setUsernameInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [oauthLoading, setOauthLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [verifiedUser, setVerifiedUser] = useState<WikipediaUser | null>(null);
+  const [oauthStatus, setOauthStatus] = useState<WikipediaOAuthStatus | null>(null);
 
   const isPt = appLanguage === 'pt';
 
-  const devUrl = authUrlData?.devCallbackUrl || 'https://ais-dev-rketbkfc2ioywj5ptq55cf-18401513977.us-west1.run.app/auth/wikipedia/callback';
-  const sharedUrl = authUrlData?.sharedCallbackUrl || 'https://ais-pre-rketbkfc2ioywj5ptq55cf-18401513977.us-west1.run.app/auth/wikipedia/callback';
+  useEffect(() => {
+    if (!isOpen) return;
+    getWikipediaOAuthStatus()
+      .then(setOauthStatus)
+      .catch(() => {});
+  }, [isOpen]);
+
+  const isOAuthConfigured = oauthStatus?.configured ?? authUrlData?.configured ?? false;
+  const hasClientId = oauthStatus?.hasClientId ?? authUrlData?.hasClientId ?? false;
+  const hasClientSecret = oauthStatus?.hasClientSecret ?? authUrlData?.hasClientSecret ?? false;
+
+  const devUrl =
+    oauthStatus?.devCallbackUrl ||
+    authUrlData?.devCallbackUrl ||
+    'https://ais-dev-rketbkfc2ioywj5ptq55cf-18401513977.us-west1.run.app/auth/wikipedia/callback';
+  const sharedUrl =
+    oauthStatus?.sharedCallbackUrl ||
+    authUrlData?.sharedCallbackUrl ||
+    'https://ais-pre-rketbkfc2ioywj5ptq55cf-18401513977.us-west1.run.app/auth/wikipedia/callback';
+
+  const handleLaunchOAuthPopup = async () => {
+    setOauthLoading(true);
+    setError(null);
+    try {
+      const freshUrl = await getWikipediaAuthUrl();
+      if (!freshUrl.configured || !freshUrl.url) {
+        setError(
+          freshUrl.message ||
+            (isPt
+              ? 'WIKIPEDIA_CLIENT_ID e WIKIPEDIA_CLIENT_SECRET ainda precisam estar configurados em Settings > Secrets.'
+              : 'WIKIPEDIA_CLIENT_ID and WIKIPEDIA_CLIENT_SECRET must be configured in Settings > Secrets.')
+        );
+        return;
+      }
+
+      const width = 650;
+      const height = 750;
+      const left = window.screen.width / 2 - width / 2;
+      const top = window.screen.height / 2 - height / 2;
+      const popup = window.open(
+        freshUrl.url,
+        'wikipedia_oauth_popup',
+        `width=${width},height=${height},left=${left},top=${top},scrollbars=yes`
+      );
+      if (!popup) {
+        setError(
+          isPt
+            ? 'Popup bloqueado pelo navegador. Permita popups para continuar o login OAuth da Wikipedia.'
+            : 'Popup blocked by browser. Please allow popups to complete Wikipedia OAuth login.'
+        );
+      }
+    } catch (err: any) {
+      setError(err.message || (isPt ? 'Erro ao abrir login OAuth da Wikipedia.' : 'Failed to start Wikipedia OAuth login.'));
+    } finally {
+      setOauthLoading(false);
+    }
+  };
 
   const handleVerify = async () => {
     if (!usernameInput.trim()) {
@@ -123,25 +190,62 @@ export const WikipediaAuthModal: React.FC<WikipediaAuthModalProps> = ({
               {/* Status Banner */}
               <div className="p-3 rounded-3 bg-secondary bg-opacity-10 border border-secondary mb-4">
                 <div className="d-flex align-items-start gap-2">
-                  <KeyRound size={20} className="text-warning mt-1 flex-shrink-0" />
-                  <div>
-                    <h6 className="fw-bold mb-1 text-warning">
-                      {isPt ? 'Configuração OAuth Wikimedia' : 'Wikimedia OAuth Setup'}
-                    </h6>
+                  {isOAuthConfigured ? (
+                    <ShieldCheck size={20} className="text-success mt-1 flex-shrink-0" />
+                  ) : (
+                    <KeyRound size={20} className="text-warning mt-1 flex-shrink-0" />
+                  )}
+                  <div className="flex-grow-1">
+                    <div className="d-flex align-items-center justify-content-between gap-2 flex-wrap mb-1">
+                      <h6 className={`fw-bold m-0 ${isOAuthConfigured ? 'text-success' : 'text-warning'}`}>
+                        {isPt ? 'Configuração OAuth 2.0 Wikimedia' : 'Wikimedia OAuth 2.0 Setup'}
+                      </h6>
+                      <span className={`badge ${isOAuthConfigured ? 'bg-success' : 'bg-warning text-dark'}`}>
+                        {isOAuthConfigured
+                          ? (isPt ? 'OAuth Ativo' : 'OAuth Active')
+                          : (isPt ? 'Secrets Pendentes' : 'Secrets Pending')}
+                      </span>
+                    </div>
                     <p className="text-white-50 small mb-2">
-                      {isPt
-                        ? 'Para habilitar o popup de autorização direta do Meta-Wiki, registre seu aplicativo no Special:OAuthConsumerRegistration e defina as variáveis de ambiente.'
-                        : 'To enable Meta-Wiki direct popup authorization, register your consumer at Special:OAuthConsumerRegistration and configure the environment variables.'}
+                      {isOAuthConfigured
+                        ? (isPt
+                            ? 'Client ID e Client Secret da Wikimedia estão configurados no servidor. Clique abaixo para autorizar sua conta e recuperar automaticamente o token OAuth para editar no Wikidata:'
+                            : 'Wikimedia Client ID and Client Secret are configured on the server. Click below to authorize your account and retrieve your OAuth token:')
+                        : (isPt
+                            ? 'A Wikimedia exige o registro prévio do consumidor OAuth 2.0 para gerar WIKIPEDIA_CLIENT_ID e WIKIPEDIA_CLIENT_SECRET (eles não podem ser emitidos apenas pelo login sem registro). Registre abaixo com as URLs de callback e adicione-os em Settings > Secrets; após isso, o login OAuth recupera automaticamente o token e seu perfil:'
+                            : 'Wikimedia requires registering an OAuth 2.0 consumer first to issue WIKIPEDIA_CLIENT_ID and WIKIPEDIA_CLIENT_SECRET. Register below with these callback URLs and add them in Settings > Secrets; once added, OAuth login automatically retrieves your token and profile:')}
                     </p>
-                    <a
-                      href="https://meta.wikimedia.org/wiki/Special:OAuthConsumerRegistration/propose"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="btn btn-sm btn-outline-light d-inline-flex align-items-center gap-1"
-                    >
-                      <span>{isPt ? 'Criar Consumidor na Wikimedia' : 'Create Consumer on Wikimedia'}</span>
-                      <ExternalLink size={14} />
-                    </a>
+                    <div className="d-flex flex-wrap gap-2 mb-2 small">
+                      <span className={`badge ${hasClientId ? 'bg-success bg-opacity-25 text-success border border-success' : 'bg-dark text-white-50 border border-secondary'}`}>
+                        WIKIPEDIA_CLIENT_ID: {hasClientId ? 'OK' : (isPt ? 'Ausente' : 'Missing')}
+                      </span>
+                      <span className={`badge ${hasClientSecret ? 'bg-success bg-opacity-25 text-success border border-success' : 'bg-dark text-white-50 border border-secondary'}`}>
+                        WIKIPEDIA_CLIENT_SECRET: {hasClientSecret ? 'OK' : (isPt ? 'Ausente' : 'Missing')}
+                      </span>
+                    </div>
+
+                    <div className="d-flex flex-wrap gap-2">
+                      {isOAuthConfigured && (
+                        <button
+                          type="button"
+                          onClick={handleLaunchOAuthPopup}
+                          disabled={oauthLoading}
+                          className="btn btn-sm btn-primary d-inline-flex align-items-center gap-2 fw-bold"
+                        >
+                          {oauthLoading ? <Loader2 className="animate-spin" size={14} /> : <ShieldCheck size={14} />}
+                          <span>{isPt ? 'Conectar via OAuth Wikipedia (Popup)' : 'Connect via Wikipedia OAuth (Popup)'}</span>
+                        </button>
+                      )}
+                      <a
+                        href="https://meta.wikimedia.org/wiki/Special:OAuthConsumerRegistration/propose"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="btn btn-sm btn-outline-light d-inline-flex align-items-center gap-1"
+                      >
+                        <span>{isPt ? 'Registrar / Gerenciar Consumidor Wikimedia' : 'Register / Manage Wikimedia Consumer'}</span>
+                        <ExternalLink size={14} />
+                      </a>
+                    </div>
                   </div>
                 </div>
 
@@ -174,12 +278,12 @@ export const WikipediaAuthModal: React.FC<WikipediaAuthModalProps> = ({
               <div className="bg-black bg-opacity-30 border border-secondary rounded-3 p-3">
                 <h6 className="fw-bold text-white mb-2 d-flex align-items-center gap-2">
                   <UserCheck size={18} className="text-success" />
-                  {isPt ? 'Autenticar com Usuário Wikipedia' : 'Authenticate with Wikipedia User'}
+                  {isPt ? 'Verificação Rápida por Usuário Wikipedia (Sem Token de Escrita)' : 'Quick Wikipedia Username Verification (No Write Token)'}
                 </h6>
                 <p className="text-white-50 small mb-3">
                   {isPt
-                    ? 'Digite seu nome de usuário da Wikipedia (qualquer idioma: pt, en, etc.) para validar seu perfil real com histórico de edições e entrar imediatamente:'
-                    : 'Enter your Wikipedia username (any language: pt, en, etc.) to validate your real profile and log in immediately:'}
+                    ? 'Digite seu nome de usuário da Wikipedia (qualquer idioma: pt, en, etc.) para validar seu perfil público e entrar imediatamente (para editar itens no Wikidata com sua conta, use o login OAuth completo acima):'
+                    : 'Enter your Wikipedia username (any language: pt, en, etc.) to validate your public profile immediately (full Wikidata OAuth edits require the OAuth popup above):'}
                 </p>
 
                 <div className="input-group mb-3">

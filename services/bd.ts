@@ -178,6 +178,9 @@ export const signOutUser = async () => {
         localStorage.removeItem('classicflix_user');
     } catch (e) {}
     try {
+        await fetch('/api/auth/wikipedia/logout', { method: 'POST' });
+    } catch (e) {}
+    try {
         const { auth, signOut } = await import('../firebase');
         await signOut(auth);
     } catch (e) {}

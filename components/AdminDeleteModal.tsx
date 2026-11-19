@@ -19,9 +19,12 @@ import {
   Image as ImageIcon,
   HardDrive,
   LogOut,
+  Languages,
 } from 'lucide-react';
-import { Movie } from '../types';
+import { Movie, AppLanguage } from '../types';
+import { APP_TRANSLATIONS } from '../constants';
 import { addSupabaseMovie, deleteSupabaseMovies, upsertIdentifiers } from '../services/supabaseClient';
+import { translateWikidataMetadata } from '../services/translateService';
 import {
   connectGoogleDrive,
   getGoogleDriveAccessToken,
@@ -38,6 +41,7 @@ import {
   searchPublicDomainProductionsInWikidata,
   buildPublicDomainProductionsSparql,
   PUBLIC_DOMAIN_TV_SERIES_SPARQL,
+  PUBLIC_DOMAIN_INSTANCE_MAP,
   TvSeriesCopyrightCheckResult,
   WikidataPublicDomainTvSeries,
   WikidataPublicDomainProduction,
@@ -49,6 +53,7 @@ interface AdminDeleteModalProps {
   currentUserEmail: string;
   onClose: () => void;
   onRefresh: () => void;
+  language?: AppLanguage;
 }
 
 type AdminTab = 'delete' | 'tv_copyright' | 'pd_search';
@@ -59,7 +64,10 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
   movies,
   onClose,
   onRefresh,
+  language = 'pt',
 }) => {
+  const t = APP_TRANSLATIONS[language] || APP_TRANSLATIONS['pt'];
+  const instanceLabels = t.adminInstanceLabels || APP_TRANSLATIONS['pt'].adminInstanceLabels;
   const [activeTab, setActiveTab] = useState<AdminTab>('delete');
 
   // --- Tab 1: Excluir Produções ---
@@ -97,10 +105,12 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
   const [pdProductionsResults, setPdProductionsResults] = useState<WikidataPublicDomainProduction[]>([]);
   const [hasRunPdProductionsSearch, setHasRunPdProductionsSearch] = useState(false);
   const [pdSearchFilterText, setPdSearchFilterText] = useState('');
+  const [pdOnlyWithP18, setPdOnlyWithP18] = useState(false);
   const [pdOnlyWithP1476, setPdOnlyWithP1476] = useState(false);
   const [pdOnlyMissing, setPdOnlyMissing] = useState(false);
   const [showPdSparqlScript, setShowPdSparqlScript] = useState(false);
   const [copiedPdSparql, setCopiedPdSparql] = useState(false);
+  const [isTranslatingPdList, setIsTranslatingPdList] = useState(false);
 
   // --- Google Drive Poster Upload ({qid}.webp) ---
   const [driveConnected, setDriveConnected] = useState<boolean>(() => Boolean(getGoogleDriveAccessToken()));
@@ -240,6 +250,7 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
   const filteredPdProductions = useMemo(() => {
     const q = pdSearchFilterText.trim().toLowerCase();
     return pdProductionsResults.filter((item) => {
+      if (pdOnlyWithP18 && !item.posterUrl) return false;
       if (pdOnlyWithP1476 && !item.hasP1476) return false;
       if (pdOnlyMissing && existingQidSet.has(item.wikidataId)) return false;
       if (!q) return true;
@@ -251,12 +262,31 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
         String(item.year || '').includes(q)
       );
     });
-  }, [pdProductionsResults, pdSearchFilterText, pdOnlyWithP1476, pdOnlyMissing, existingQidSet]);
+  }, [pdProductionsResults, pdSearchFilterText, pdOnlyWithP18, pdOnlyWithP1476, pdOnlyMissing, existingQidSet]);
 
   const pdSparqlPreview = useMemo(
-    () => buildPublicDomainProductionsSparql(pdSearchCategory, pdSearchLimit),
-    [pdSearchCategory, pdSearchLimit]
+    () =>
+      buildPublicDomainProductionsSparql(pdSearchCategory, pdSearchLimit, {
+        onlyWithImage: pdOnlyWithP18,
+        onlyWithTitle: pdOnlyWithP1476,
+      }),
+    [pdSearchCategory, pdSearchLimit, pdOnlyWithP18, pdOnlyWithP1476]
   );
+
+  const getTranslatedInstanceLabel = (item: WikidataPublicDomainProduction): string => {
+    if (item.isDocumentary) {
+      return instanceLabels?.documentary_film || item.instanceLabel;
+    }
+    const matched = (
+      Object.entries(PUBLIC_DOMAIN_INSTANCE_MAP) as Array<
+        [Exclude<PublicDomainProductionCategory, 'all' | 'documentary_film'>, { qid: string }]
+      >
+    ).find(([, entry]) => entry.qid === item.instanceQid);
+    if (matched && instanceLabels?.[matched[0]]) {
+      return instanceLabels[matched[0]];
+    }
+    return item.instanceLabel;
+  };
 
   const toggleSelection = (qid: string) => {
     const newSelection = new Set(selectedIds);
@@ -409,14 +439,15 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
     setImportingQid(item.wikidataId);
     setStatusMessage(null);
     try {
-      const { posterUrl, driveNote, warningNote } = await resolvePosterUrlForImport(
-        item.wikidataId,
-        item.posterUrl
-      );
+      const [{ posterUrl, driveNote, warningNote }, translatedMeta] = await Promise.all([
+        resolvePosterUrlForImport(item.wikidataId, item.posterUrl),
+        translateWikidataMetadata({ title: item.title, to: 'pt' }).catch(() => null),
+      ]);
 
       await addSupabaseMovie({
         wikidataId: item.wikidataId,
         title: item.title,
+        titlePt: translatedMeta?.titlePt || undefined,
         originalTitle: item.titleP1476 || item.title,
         description: item.description,
         descriptionEn: item.description,
@@ -484,7 +515,10 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
     setIsSearchingPdProductions(true);
     setStatusMessage(null);
     try {
-      const res = await searchPublicDomainProductionsInWikidata(pdSearchCategory, pdSearchLimit);
+      const res = await searchPublicDomainProductionsInWikidata(pdSearchCategory, pdSearchLimit, {
+        onlyWithImage: pdOnlyWithP18,
+        onlyWithTitle: pdOnlyWithP1476,
+      });
       setPdProductionsResults(res);
       setHasRunPdProductionsSearch(true);
     } catch (err: any) {
@@ -507,12 +541,70 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
     }
   };
 
+  const handleTranslateVisiblePdItems = async () => {
+    const targets = filteredPdProductions
+      .filter((item) => !item.titlePt)
+      .slice(0, 20);
+    if (targets.length === 0) {
+      setStatusMessage({
+        type: 'info',
+        text: 'Os itens visíveis já possuem título/label traduzidos em português.',
+      });
+      return;
+    }
+
+    setIsTranslatingPdList(true);
+    setStatusMessage(null);
+    try {
+      const updates = new Map<string, { titlePt: string; genres?: string[]; themes?: string[] }>();
+      for (const item of targets) {
+        const res = await translateWikidataMetadata({
+          title: item.originalTitle,
+          label: item.wikidataLabel,
+          genres: item.genres,
+          themes: item.themes,
+          to: 'pt',
+        });
+        updates.set(item.wikidataId, {
+          titlePt: res.titlePt || res.labelPt || item.originalTitle,
+          genres: res.genresPt?.length ? res.genresPt : item.genres,
+          themes: res.themesPt?.length ? res.themesPt : item.themes,
+        });
+      }
+
+      setPdProductionsResults((prev) =>
+        prev.map((p) => {
+          const upd = updates.get(p.wikidataId);
+          return upd
+            ? {
+                ...p,
+                titlePt: upd.titlePt,
+                genres: upd.genres || p.genres,
+                themes: upd.themes || p.themes,
+              }
+            : p;
+        })
+      );
+      setStatusMessage({
+        type: 'success',
+        text: `${updates.size} título(s) e label(s) do Wikidata traduzidos via servidor Node.js.`,
+      });
+    } catch (err: any) {
+      setStatusMessage({
+        type: 'danger',
+        text: `Erro ao traduzir títulos/labels: ${err?.message || String(err)}`,
+      });
+    } finally {
+      setIsTranslatingPdList(false);
+    }
+  };
+
   const handleImportPdProduction = async (item: WikidataPublicDomainProduction) => {
     setImportingQid(item.wikidataId);
     setStatusMessage(null);
     try {
       const type = item.supabaseType || item.instanceLabel || 'film';
-      const genres =
+      const rawGenres =
         item.genres && item.genres.length > 0
           ? item.genres
           : item.isDocumentary
@@ -522,18 +614,36 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
               : item.instanceQid === 'Q17517379'
                 ? ['Animation', 'Short']
                 : ['Classic'];
-      const themes = item.themes && item.themes.length > 0 ? item.themes : undefined;
+      const rawThemes = item.themes && item.themes.length > 0 ? item.themes : undefined;
 
-      const { posterUrl, driveNote, warningNote } = await resolvePosterUrlForImport(
-        item.wikidataId,
-        item.posterUrl
-      );
+      const [{ posterUrl, driveNote, warningNote }, translatedMeta] = await Promise.all([
+        resolvePosterUrlForImport(item.wikidataId, item.posterUrl),
+        translateWikidataMetadata({
+          title: item.titlePt ? undefined : item.originalTitle,
+          label: item.wikidataLabel,
+          genres: rawGenres,
+          themes: rawThemes,
+          to: 'pt',
+        }).catch(() => null),
+      ]);
+
+      const resolvedTitlePt =
+        item.titlePt || translatedMeta?.titlePt || translatedMeta?.labelPt || undefined;
+      const genres =
+        translatedMeta?.genresPt && translatedMeta.genresPt.length > 0
+          ? translatedMeta.genresPt
+          : rawGenres;
+      const themes =
+        translatedMeta?.themesPt && translatedMeta.themesPt.length > 0
+          ? translatedMeta.themesPt
+          : rawThemes;
 
       const englishDescription = item.descriptionEn || item.description || '';
 
       await addSupabaseMovie({
         wikidataId: item.wikidataId,
         title: item.originalTitle,
+        titlePt: resolvedTitlePt,
         originalTitle: item.originalTitle,
         description: englishDescription,
         descriptionEn: englishDescription,
@@ -547,7 +657,7 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
         type,
         genres,
         themes,
-        license: 'Public Domain (Q19652)',
+        license: item.licenseLabel || 'Public Domain (Q19652)',
       });
 
       await upsertIdentifiers(item.wikidataId, {
@@ -568,7 +678,7 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
 
       setStatusMessage({
         type: warningNote ? 'info' : 'success',
-        text: `Produção "${item.originalTitle}" (${item.wikidataId}) importada para o catálogo.${hints.length ? ' ' + hints.join(' ') : ''}`,
+        text: `Produção "${resolvedTitlePt || item.originalTitle}" (${item.wikidataId}) importada para o catálogo.${hints.length ? ' ' + hints.join(' ') : ''}`,
       });
       onRefresh();
     } catch (err: any) {
@@ -609,7 +719,7 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
         <div className="modal-content bg-dark border-danger text-white shadow-lg">
           <div className="modal-header border-danger bg-danger bg-opacity-10 d-flex justify-content-between align-items-center">
             <h5 className="modal-title d-flex align-items-center gap-2 text-danger fw-bold">
-              <ShieldAlert size={24} /> Painel do Administrador
+              <ShieldAlert size={24} /> {t.adminPanelTitle || 'Painel do Administrador'}
             </h5>
             <button
               className="btn-close btn-close-white"
@@ -631,7 +741,7 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                   onClick={() => setActiveTab('delete')}
                 >
                   <Trash2 size={16} />
-                  <span>Gerenciar / Excluir Produções</span>
+                  <span>{t.adminTabDelete || 'Gerenciar / Excluir Produções'}</span>
                 </button>
               </li>
               <li className="nav-item">
@@ -645,7 +755,7 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                   onClick={() => setActiveTab('tv_copyright')}
                 >
                   <Tv size={16} />
-                  <span>Verificar Séries TV em Domínio Público</span>
+                  <span>{t.adminTabTvCopyright || 'Verificar Séries TV em Domínio Público'}</span>
                 </button>
               </li>
               <li className="nav-item">
@@ -659,7 +769,7 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                   onClick={() => setActiveTab('pd_search')}
                 >
                   <Search size={16} />
-                  <span>Pesquisar Domínio Público (Wikidata)</span>
+                  <span>{t.adminTabPdSearch || 'Pesquisar Domínio Público (Wikidata)'}</span>
                 </button>
               </li>
             </ul>
@@ -1195,20 +1305,20 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                   <div className="d-flex flex-wrap justify-content-between align-items-start gap-3">
                     <div>
                       <h6 className="text-success fw-bold mb-1 d-flex align-items-center gap-2">
-                        <ShieldCheck size={18} /> Pesquisa de Produções Visuais em Domínio Público (Wikidata)
+                        <ShieldCheck size={18} /> {t.adminPdTitle || 'Pesquisa de Produções Visuais em Domínio Público (Wikidata)'}
                       </h6>
                       <p className="small text-secondary mb-2">
-                        Busca produções com direitos autorais em domínio público (P6216 = Q19652) e exibe QID, título original (P1476), instância, idioma e ano.
+                        {t.adminPdDesc || 'Busca produções com direitos autorais em domínio público (P6216 = Q19652) e exibe QID, título original (P1476), instância, idioma e ano.'}
                       </p>
                       <div className="d-flex flex-wrap gap-2 small">
                         <span className="badge bg-dark border border-secondary">
-                          14 instâncias (film Q11424, short film, television film, silent film, animated film, television series, miniseries, documentário...)
+                          {t.adminPdInstancesSummary || '14 instâncias (film Q11424, short film, television film, silent film, animated film, television series, miniseries, documentário...)'}
                         </span>
                         <span className="badge bg-success bg-opacity-25 text-success border border-success">
-                          P6216 = Q19652 (Domínio Público)
+                          {t.adminPdCopyrightBadge || 'P6216 = Q19652 (Domínio Público)'}
                         </span>
                         <span className="badge bg-dark border border-info text-info">
-                          Importa P136 (genres), P921 (themes), P57 (director), P2047 (duration)
+                          {t.adminPdImportsBadge || 'Importa P136 (genres), P921 (themes), P57 (director), P2047 (duration)'}
                         </span>
                       </div>
                     </div>
@@ -1219,7 +1329,11 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                       onClick={() => setShowPdSparqlScript((prev) => !prev)}
                     >
                       <Code2 size={15} />
-                      <span>{showPdSparqlScript ? 'Ocultar SPARQL' : 'Ver Script SPARQL'}</span>
+                      <span>
+                        {showPdSparqlScript
+                          ? (t.adminPdHideSparql || 'Ocultar SPARQL')
+                          : (t.adminPdViewSparql || 'Ver Script SPARQL')}
+                      </span>
                     </button>
                   </div>
 
@@ -1231,7 +1345,9 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                         onClick={handleCopyPdSparql}
                       >
                         {copiedPdSparql ? <Check size={14} className="text-success" /> : <Copy size={14} />}
-                        <span className="xsmall">{copiedPdSparql ? 'Copiado' : 'Copiar'}</span>
+                        <span className="xsmall">
+                          {copiedPdSparql ? (t.adminPdCopied || 'Copiado') : (t.adminPdCopy || 'Copiar')}
+                        </span>
                       </button>
                       <pre
                         className="bg-dark text-success p-3 rounded border border-secondary small mb-0 custom-scrollbar"
@@ -1244,32 +1360,36 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
 
                   <div className="row g-2 align-items-end mt-3 pt-3 border-top border-secondary border-opacity-50">
                     <div className="col-md-5">
-                      <label className="small text-secondary mb-1">Tipo / Instância</label>
+                      <label className="small text-secondary mb-1">
+                        {t.adminPdTypeInstance || 'Tipo / Instância'}
+                      </label>
                       <select
                         className="form-select form-select-sm bg-dark border-secondary text-white shadow-none"
                         value={pdSearchCategory}
                         onChange={(e) => setPdSearchCategory(e.target.value as PublicDomainProductionCategory)}
                         disabled={isSearchingPdProductions}
                       >
-                        <option value="all">Todas as instâncias</option>
-                        <option value="film">film (Q11424)</option>
-                        <option value="short_film">short film (Q24862)</option>
-                        <option value="television_film">television film (Q506240)</option>
-                        <option value="television_program">television program (Q15416)</option>
-                        <option value="television_series_episode">television series episode (Q21191270)</option>
-                        <option value="silent_film">silent film (Q226730)</option>
-                        <option value="silent_short_film">silent short film (Q20667187)</option>
-                        <option value="animated_short">animated short film (Q17517379)</option>
-                        <option value="animated_film">animated film (Q202866)</option>
-                        <option value="tv_series">television series (Q5398426)</option>
-                        <option value="film_series">film series (Q24856)</option>
-                        <option value="open_source_film">open-source film (Q917641)</option>
-                        <option value="documentary_film">gênero documentário (Q11424 + P136 = Q93204)</option>
-                        <option value="miniseries">miniseries (Q1259759)</option>
+                        <option value="all">{t.adminPdAllInstances || 'Todas as instâncias'}</option>
+                        <option value="film">{instanceLabels.film} (Q11424)</option>
+                        <option value="short_film">{instanceLabels.short_film} (Q24862)</option>
+                        <option value="television_film">{instanceLabels.television_film} (Q506240)</option>
+                        <option value="television_program">{instanceLabels.television_program} (Q15416)</option>
+                        <option value="television_series_episode">{instanceLabels.television_series_episode} (Q21191270)</option>
+                        <option value="silent_film">{instanceLabels.silent_film} (Q226730)</option>
+                        <option value="silent_short_film">{instanceLabels.silent_short_film} (Q20667187)</option>
+                        <option value="animated_short">{instanceLabels.animated_short} (Q17517379)</option>
+                        <option value="animated_film">{instanceLabels.animated_film} (Q202866)</option>
+                        <option value="tv_series">{instanceLabels.tv_series} (Q5398426)</option>
+                        <option value="film_series">{instanceLabels.film_series} (Q24856)</option>
+                        <option value="open_source_film">{instanceLabels.open_source_film} (Q917641 / Creative Commons)</option>
+                        <option value="documentary_film">{instanceLabels.documentary_film} (Q11424 + P136 = Q93204)</option>
+                        <option value="miniseries">{instanceLabels.miniseries} (Q1259759)</option>
                       </select>
                     </div>
                     <div className="col-md-2">
-                      <label className="small text-secondary mb-1">Limite SPARQL</label>
+                      <label className="small text-secondary mb-1">
+                        {t.adminPdSparqlLimit || 'Limite SPARQL'}
+                      </label>
                       <select
                         className="form-select form-select-sm bg-dark border-secondary text-white shadow-none"
                         value={pdSearchLimit}
@@ -1292,12 +1412,12 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                         {isSearchingPdProductions ? (
                           <>
                             <Loader2 size={15} className="animate-spin" />
-                            <span>Pesquisando no Wikidata...</span>
+                            <span>{t.adminPdSearchingBtn || 'Pesquisando no Wikidata...'}</span>
                           </>
                         ) : (
                           <>
                             <Search size={15} />
-                            <span>Pesquisar no Wikidata</span>
+                            <span>{t.adminPdSearchBtn || 'Pesquisar no Wikidata'}</span>
                           </>
                         )}
                       </button>
@@ -1308,10 +1428,44 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                           onClick={handleExportPdCsv}
                         >
                           <Download size={14} />
-                          <span>Exportar CSV</span>
+                          <span>{t.adminPdExportCsv || 'Exportar CSV'}</span>
                         </button>
                       )}
                     </div>
+                  </div>
+
+                  {/* Opções de filtro exibidas antes e depois da pesquisa */}
+                  <div className="d-flex flex-wrap align-items-center gap-4 mt-3 pt-3 border-top border-secondary border-opacity-50 small">
+                    <label className="form-check-label d-flex align-items-center gap-2 text-white-50" style={{ cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        className="form-check-input mt-0"
+                        checked={pdOnlyWithP18}
+                        onChange={(e) => setPdOnlyWithP18(e.target.checked)}
+                        disabled={isSearchingPdProductions}
+                      />
+                      <span>{t.adminOnlyWithImage || 'Somente itens com imagem (P18)'}</span>
+                    </label>
+                    <label className="form-check-label d-flex align-items-center gap-2 text-white-50" style={{ cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        className="form-check-input mt-0"
+                        checked={pdOnlyWithP1476}
+                        onChange={(e) => setPdOnlyWithP1476(e.target.checked)}
+                        disabled={isSearchingPdProductions}
+                      />
+                      <span>{t.adminOnlyWithTitle || 'Somente itens com título (P1476)'}</span>
+                    </label>
+                    <label className="form-check-label d-flex align-items-center gap-2 text-white-50" style={{ cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        className="form-check-input mt-0"
+                        checked={pdOnlyMissing}
+                        onChange={(e) => setPdOnlyMissing(e.target.checked)}
+                        disabled={isSearchingPdProductions}
+                      />
+                      <span>{t.adminOnlyMissing || 'Somente não cadastradas'}</span>
+                    </label>
                   </div>
 
                   {/* Barra de Conexão Google Drive para salvar pôster {qid}.webp */}
@@ -1322,12 +1476,12 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                       {isConnectingDrive && !driveConnected ? (
                         <span className="text-info d-inline-flex align-items-center gap-1">
                           <Loader2 size={13} className="animate-spin" />
-                          <span>Conectando ao Google Drive automaticamente...</span>
+                          <span>{t.adminPdConnectingDrive || 'Conectando ao Google Drive automaticamente...'}</span>
                         </span>
                       ) : driveConnected ? (
                         <>
                           <span className="badge bg-success bg-opacity-25 text-success border border-success">
-                            Conectado{driveUserEmail ? ` • ${driveUserEmail}` : ''}
+                            {t.adminPdConnected || 'Conectado'}{driveUserEmail ? ` • ${driveUserEmail}` : ''}
                           </span>
                           <label className="form-check-label d-flex align-items-center gap-1 text-white-50 ms-2">
                             <input
@@ -1359,7 +1513,7 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                           onClick={handleDisconnectDrive}
                         >
                           <LogOut size={14} />
-                          <span>Desconectar Drive</span>
+                          <span>{t.adminPdDisconnectDrive || 'Desconectar Drive'}</span>
                         </button>
                       ) : (
                         <button
@@ -1390,7 +1544,7 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                               />
                             </svg>
                           )}
-                          <span>Conectar Google Drive</span>
+                          <span>{t.adminPdConnectDrive || 'Conectar Google Drive'}</span>
                         </button>
                       )}
                     </div>
@@ -1408,33 +1562,30 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                           <input
                             type="text"
                             className="form-control bg-dark border-secondary text-white shadow-none"
-                            placeholder="Filtrar QID, título, idioma, ano..."
+                            placeholder={t.adminPdFilterPlaceholder || 'Filtrar QID, título, idioma, ano...'}
                             value={pdSearchFilterText}
                             onChange={(e) => setPdSearchFilterText(e.target.value)}
                           />
                         </div>
-                        <label className="form-check-label d-flex align-items-center gap-1 text-white-50">
-                          <input
-                            type="checkbox"
-                            className="form-check-input mt-0"
-                            checked={pdOnlyWithP1476}
-                            onChange={(e) => setPdOnlyWithP1476(e.target.checked)}
-                          />
-                          <span>Somente com P1476</span>
-                        </label>
-                        <label className="form-check-label d-flex align-items-center gap-1 text-white-50">
-                          <input
-                            type="checkbox"
-                            className="form-check-input mt-0"
-                            checked={pdOnlyMissing}
-                            onChange={(e) => setPdOnlyMissing(e.target.checked)}
-                          />
-                          <span>Somente não cadastradas</span>
-                        </label>
                       </div>
-                      <span className="badge bg-secondary">
-                        {filteredPdProductions.length} produção(ões)
-                      </span>
+                      <div className="d-flex align-items-center gap-2">
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline-info d-inline-flex align-items-center gap-1"
+                          onClick={handleTranslateVisiblePdItems}
+                          disabled={isTranslatingPdList || filteredPdProductions.length === 0}
+                        >
+                          {isTranslatingPdList ? (
+                            <Loader2 size={13} className="animate-spin" />
+                          ) : (
+                            <Languages size={13} />
+                          )}
+                          <span>Traduzir Títulos/Labels (PT)</span>
+                        </button>
+                        <span className="badge bg-secondary">
+                          {filteredPdProductions.length} {t.adminPdProductionsCount || 'produção(ões)'}
+                        </span>
+                      </div>
                     </div>
 
                     <div className="table-responsive custom-scrollbar" style={{ maxHeight: '420px' }}>
@@ -1442,18 +1593,18 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                         <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                           <tr>
                             <th>QID</th>
-                            <th>Título Original (P1476)</th>
-                            <th>Instância</th>
-                            <th>Idioma</th>
-                            <th>Ano</th>
-                            <th>Catálogo</th>
+                            <th>{t.adminPdColTitle || 'Título Original (P1476)'}</th>
+                            <th>{t.adminPdColInstance || 'Instância'}</th>
+                            <th>{t.adminPdColLanguage || 'Idioma'}</th>
+                            <th>{t.adminPdColYear || 'Ano'}</th>
+                            <th>{t.adminPdColCatalog || 'Catálogo'}</th>
                           </tr>
                         </thead>
                         <tbody>
                           {filteredPdProductions.length === 0 ? (
                             <tr>
                               <td colSpan={6} className="text-center text-secondary py-4">
-                                Nenhuma produção encontrada com os filtros atuais.
+                                {t.adminPdNoResults || 'Nenhuma produção encontrada com os filtros atuais.'}
                               </td>
                             </tr>
                           ) : (
@@ -1480,13 +1631,23 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                                       {item.posterUrl && (
                                         <span
                                           className="badge bg-dark border border-secondary text-info d-inline-flex align-items-center gap-1"
-                                          title="Possui imagem P18 no Wikidata"
+                                          title={t.adminPdHasP18Title || 'Possui imagem P18 no Wikidata'}
                                         >
                                           <ImageIcon size={11} />
                                           <span>P18</span>
                                         </span>
                                       )}
+                                      {item.licenseLabel && item.licenseLabel !== 'Public Domain (Q19652)' && (
+                                        <span className="badge bg-dark border border-warning text-warning">
+                                          {item.licenseLabel}
+                                        </span>
+                                      )}
                                     </div>
+                                    {item.titlePt && item.titlePt !== item.originalTitle && (
+                                      <div className="text-info fw-normal" style={{ fontSize: '0.75rem' }}>
+                                        PT: {item.titlePt}
+                                      </div>
+                                    )}
                                     {(item.descriptionEn) && (
                                       <div
                                         className="text-secondary fw-normal text-truncate"
@@ -1498,14 +1659,16 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                                   </td>
                                   <td className="small">
                                     <span className="badge bg-dark border border-info text-info">
-                                      {item.instanceLabel} ({item.instanceQid})
+                                      {getTranslatedInstanceLabel(item)} ({item.instanceQid})
                                     </span>
                                   </td>
                                   <td className="small text-white-50">{item.language}</td>
                                   <td className="small text-white-50">{item.year || '—'}</td>
                                   <td className="small">
                                     {alreadyExists ? (
-                                      <span className="badge bg-success">Já cadastrado</span>
+                                      <span className="badge bg-success">
+                                        {t.adminPdAlreadyRegistered || 'Já cadastrado'}
+                                      </span>
                                     ) : (
                                       <button
                                         type="button"
@@ -1518,7 +1681,7 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                                         ) : (
                                           <PlusCircle size={12} />
                                         )}
-                                        <span>Importar</span>
+                                        <span>{t.adminPdImport || 'Importar'}</span>
                                       </button>
                                     )}
                                   </td>
@@ -1579,7 +1742,7 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                   onClick={onClose}
                   disabled={isCheckingCatalog || isSearchingPdProductions}
                 >
-                  Fechar
+                  {t.adminPdClose || 'Fechar'}
                 </button>
               </>
             )}

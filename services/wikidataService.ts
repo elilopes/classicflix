@@ -140,7 +140,11 @@ export const fetchMovieByQid = async (qid: string): Promise<Partial<Movie> | nul
     }
 
     const sparql = `
-      SELECT ?itemLabel ?itemDescription ?image ?pubDate ?director ?directorLabel ?duration ?typeLabel ?iaId
+      SELECT ?itemLabel ?ptLabelRaw ?itemDescription ?image ?pubDate ?duration ?typeLabel ?iaId
+        (SAMPLE(?director) AS ?directorEntity)
+        (SAMPLE(?producer) AS ?producerEntity)
+        (GROUP_CONCAT(DISTINCT ?directorLabel; SEPARATOR=", ") AS ?directorList)
+        (GROUP_CONCAT(DISTINCT ?producerLabel; SEPARATOR=", ") AS ?producerList)
         (GROUP_CONCAT(DISTINCT ?castLabel; SEPARATOR="|") AS ?castList)
         (GROUP_CONCAT(DISTINCT ?composerLabel; SEPARATOR="|") AS ?composerList)
         (GROUP_CONCAT(DISTINCT ?dopLabel; SEPARATOR="|") AS ?dopList)
@@ -148,8 +152,10 @@ export const fetchMovieByQid = async (qid: string): Promise<Partial<Movie> | nul
         (GROUP_CONCAT(DISTINCT ?genreLabel; SEPARATOR="|") AS ?genreList)
       WHERE {
         BIND(wd:${cleanQid} AS ?item)
+        OPTIONAL { ?item rdfs:label ?ptLabelRaw . FILTER(LANG(?ptLabelRaw) = "pt") }
         OPTIONAL { ?item wdt:P18 ?image. }
         OPTIONAL { ?item wdt:P57 ?director. }
+        OPTIONAL { ?item wdt:P162 ?producer. }
         OPTIONAL { ?item wdt:P577 ?pubDate. }
         OPTIONAL { ?item wdt:P2047 ?duration. }
         OPTIONAL { ?item wdt:P724 ?iaId. }
@@ -165,6 +171,7 @@ export const fetchMovieByQid = async (qid: string): Promise<Partial<Movie> | nul
           ?item rdfs:label ?itemLabel .
           ?item schema:description ?itemDescription .
           ?director rdfs:label ?directorLabel .
+          ?producer rdfs:label ?producerLabel .
           ?type rdfs:label ?typeLabel .
           ?cast rdfs:label ?castLabel .
           ?composer rdfs:label ?composerLabel .
@@ -172,7 +179,7 @@ export const fetchMovieByQid = async (qid: string): Promise<Partial<Movie> | nul
           ?subject rdfs:label ?subjectLabel .
           ?genre rdfs:label ?genreLabel .
         }
-      } GROUP BY ?itemLabel ?itemDescription ?image ?pubDate ?director ?directorLabel ?duration ?typeLabel ?iaId
+      } GROUP BY ?itemLabel ?ptLabelRaw ?itemDescription ?image ?pubDate ?duration ?typeLabel ?iaId
       LIMIT 1
     `;
 
@@ -188,10 +195,15 @@ export const fetchMovieByQid = async (qid: string): Promise<Partial<Movie> | nul
         if (match) year = parseInt(match[0]);
     }
     
-    // Extract Director QID from URI (e.g., http://www.wikidata.org/entity/Q123 -> Q123)
+    const directorNames = b.directorList?.value ? sanitizeWikidataListValue(b.directorList.value) : "";
+    const producerNames = b.producerList?.value ? sanitizeWikidataListValue(b.producerList.value) : "";
+    const resolvedDirector = directorNames || producerNames || "Unknown";
+
+    // Extract Director (P57) QID, or Producer (P162) QID as fallback
     let directorId = "";
-    if (b.director && b.director.value) {
-        const parts = b.director.value.split('/');
+    const entityUri = b.directorEntity?.value || (!directorNames ? b.producerEntity?.value : "");
+    if (entityUri) {
+        const parts = entityUri.split('/');
         directorId = parts[parts.length - 1];
     }
     
@@ -201,9 +213,10 @@ export const fetchMovieByQid = async (qid: string): Promise<Partial<Movie> | nul
     return {
         wikidataId: cleanQid,
         title: b.itemLabel?.value || "",
+        titlePt: b.ptLabelRaw?.value || "",
         description: b.itemDescription?.value || "",
         posterUrl: posterUrl,
-        director: b.directorLabel?.value || "Unknown",
+        director: resolvedDirector,
         directorId: directorId, // Return the QID
         year: year,
         duration: b.duration ? `${Math.floor(Number(b.duration.value))}m` : "",
@@ -280,6 +293,7 @@ export const fetchExtendedWikidataDetails = async (query: string): Promise<any> 
       SELECT 
         (SAMPLE(?origTitle) AS ?originalTitle)
         (SAMPLE(?clrLabel) AS ?colorLabel)
+        (GROUP_CONCAT(DISTINCT ?directorLabel; SEPARATOR="|") AS ?directorList)
         (GROUP_CONCAT(DISTINCT ?castLabel; SEPARATOR="|") AS ?castList)
         (GROUP_CONCAT(DISTINCT ?composerLabel; SEPARATOR="|") AS ?composerList)
         (GROUP_CONCAT(DISTINCT ?dopLabel; SEPARATOR="|") AS ?dopList)
@@ -294,6 +308,7 @@ export const fetchExtendedWikidataDetails = async (query: string): Promise<any> 
         
         OPTIONAL { ?movie wdt:P1476 ?origTitle. }
         OPTIONAL { ?movie wdt:P462 ?color. }
+        OPTIONAL { ?movie wdt:P57 ?dir. }
         OPTIONAL { ?movie wdt:P161 ?cast. }
         OPTIONAL { ?movie wdt:P86 ?comp. }
         OPTIONAL { ?movie wdt:P344 ?dop. }
@@ -307,6 +322,7 @@ export const fetchExtendedWikidataDetails = async (query: string): Promise<any> 
         SERVICE wikibase:label { 
           bd:serviceParam wikibase:language "en,pt,es,fr". 
           ?color rdfs:label ?clrLabel.
+          ?dir rdfs:label ?directorLabel.
           ?cast rdfs:label ?castLabel.
           ?comp rdfs:label ?composerLabel.
           ?dop rdfs:label ?dopLabel.
@@ -339,6 +355,7 @@ export const fetchExtendedWikidataDetails = async (query: string): Promise<any> 
         return {
             originalTitle: b.originalTitle?.value || "",
             color: b.colorLabel?.value || "",
+            directors: split(b.directorList),
             cast: split(b.castList),
             composers: split(b.composerList),
             cinematographers: split(b.dopList),
@@ -360,12 +377,13 @@ export const fetchExtendedWikidataDetails = async (query: string): Promise<any> 
  */
 export const findPublicDomainMovies = async (existingIds: string[] = []): Promise<Partial<Movie>[]> => {
     const sparql = `
-      SELECT ?item ?itemLabel ?itemDescription ?image ?pubDate ?directorLabel ?iaId
+      SELECT ?item ?itemLabel ?itemDescription ?image ?pubDate ?directorLabel ?producerLabel ?iaId
       WHERE {
         ?item wdt:P31 wd:Q11424. # instance of movie
         ?item wdt:P6216 wd:Q19652. # copyright status: public domain
         OPTIONAL { ?item wdt:P18 ?image. }
-        OPTIONAL { ?item wdt:P57 ?director. ?director rdfs:label ?directorLabel. FILTER(LANG(?directorLabel) = "en") }
+        OPTIONAL { ?item wdt:P57 ?director. ?director rdfs:label ?directorLabel. FILTER(LANG(?directorLabel) IN ("en", "pt")) }
+        OPTIONAL { ?item wdt:P162 ?producer. ?producer rdfs:label ?producerLabel. FILTER(LANG(?producerLabel) IN ("en", "pt")) }
         OPTIONAL { ?item wdt:P577 ?pubDate. }
         OPTIONAL { ?item wdt:P724 ?iaId. } # Internet Archive ID
         
@@ -399,7 +417,7 @@ export const findPublicDomainMovies = async (existingIds: string[] = []): Promis
                     title: b.itemLabel?.value || "Unknown",
                     description: b.itemDescription?.value || "",
                     year: year,
-                    director: b.directorLabel?.value || "Unknown",
+                    director: b.directorLabel?.value || b.producerLabel?.value || "Unknown",
                     posterUrl: b.image ? getWikimediaThumbnail(b.image.value, 300) : "",
                     videoUrl: b.iaId ? `https://archive.org/download/${b.iaId.value}/${b.iaId.value}.mp4` : ""
                 };
@@ -449,6 +467,7 @@ export const PUBLIC_DOMAIN_TV_SERIES_SPARQL = `SELECT ?item
   (SAMPLE(?image) AS ?posterImage)
   (SAMPLE(?pubDate) AS ?date)
   (SAMPLE(?directorLabel) AS ?director)
+  (SAMPLE(?producerLabel) AS ?producer)
   (SAMPLE(?iaId) AS ?archiveId)
   (SAMPLE(?langLabel) AS ?origLang)
 WHERE {
@@ -457,6 +476,7 @@ WHERE {
   OPTIONAL { ?item wdt:P1476 ?p1476Title . } # título
   OPTIONAL { ?item wdt:P18 ?image . }
   OPTIONAL { ?item wdt:P57 ?dir . ?dir rdfs:label ?directorLabel . FILTER(LANG(?directorLabel) IN ("pt", "en")) }
+  OPTIONAL { ?item wdt:P162 ?prod . ?prod rdfs:label ?producerLabel . FILTER(LANG(?producerLabel) IN ("pt", "en")) }
   OPTIONAL { ?item wdt:P577 ?pubDate . }
   OPTIONAL { ?item wdt:P724 ?iaId . }
   OPTIONAL { ?item wdt:P364 ?lang . ?lang rdfs:label ?langLabel . FILTER(LANG(?langLabel) = "en") }
@@ -610,7 +630,7 @@ export const findPublicDomainTvSeries = async (): Promise<WikidataPublicDomainTv
                     titleP1476,
                     description: b.description?.value || "",
                     year,
-                    director: b.director?.value || "Unknown",
+                    director: b.director?.value || b.producer?.value || "Unknown",
                     language: b.origLang?.value || "Unknown",
                     posterUrl: b.posterImage?.value ? getWikimediaThumbnail(b.posterImage.value, 300) : "",
                     videoUrl: iaId ? `https://archive.org/download/${iaId}/${iaId}.mp4` : "",
@@ -691,6 +711,8 @@ const parseCleanPipeList = (raw?: string): string[] => {
 export interface WikidataPublicDomainProduction {
     wikidataId: string;
     originalTitle: string;
+    titlePt?: string;
+    wikidataLabel?: string;
     hasP1476: boolean;
     instanceQid: string;
     instanceLabel: string;
@@ -705,6 +727,7 @@ export interface WikidataPublicDomainProduction {
     duration: string;
     genres: string[];
     themes: string[];
+    licenseLabel?: string;
     posterUrl: string;
     videoUrl: string;
     hasVideo: boolean;
@@ -716,20 +739,63 @@ export interface WikidataPublicDomainProduction {
     commons?: string;
 }
 
+export interface PublicDomainSearchOptions {
+    onlyWithImage?: boolean;
+    onlyWithTitle?: boolean;
+}
+
 export const buildPublicDomainProductionsSparql = (
     category: PublicDomainProductionCategory = 'all',
-    limit: number = 150
+    limit: number = 150,
+    options: PublicDomainSearchOptions = {}
 ): string => {
+    const allVisualQids = Object.values(PUBLIC_DOMAIN_INSTANCE_MAP)
+        .map((entry) => `wd:${entry.qid}`)
+        .join(' ');
+
     const docFilmBranch = `{
     ?item wdt:P31 wd:Q11424 .    # instância de: film
     ?item wdt:P136 wd:Q93204 .   # gênero: documentary film
     ?item wdt:P6216 wd:Q19652 .  # domínio público
     BIND(wd:Q11424 AS ?matchedInstance)
+    BIND(wd:Q19652 AS ?ccLicense)
     BIND(true AS ?isDoc)
   }`;
 
     let wherePattern = '';
-    if (category === 'documentary_film') {
+    if (category === 'open_source_film') {
+        // Open-source film (Q917641), copyright status P6216=Q18810333 (CC BY 2.5 Generic)
+        // e todas as 13 instâncias visuais com copyright license P275 Creative Commons
+        wherePattern = `{
+    ?item wdt:P31 wd:Q917641 .   # open-source film
+    BIND(wd:Q917641 AS ?matchedInstance)
+    BIND(false AS ?isDoc)
+    OPTIONAL { ?item wdt:P275 ?ccLicense . }
+  }
+  UNION
+  {
+    VALUES ?matchedInstance { ${allVisualQids} }
+    ?item wdt:P31 ?matchedInstance .
+    ?item wdt:P6216 wd:Q18810333 . # copyright status: Creative Commons Attribution 2.5 Generic
+    BIND(wd:Q18810333 AS ?ccLicense)
+    BIND(false AS ?isDoc)
+  }
+  UNION
+  {
+    VALUES ?matchedInstance { ${allVisualQids} }
+    VALUES ?ccLicense {
+      wd:Q14947546 # Creative Commons Attribution 3.0 Unported
+      wd:Q19068212 # Creative Commons Attribution-NonCommercial-ShareAlike 2.5 Generic
+      wd:Q18810333 # Creative Commons Attribution 2.5 Generic
+      wd:Q14946043 # Creative Commons Attribution-ShareAlike 3.0 Unported
+      wd:Q15643954 # Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported
+      wd:Q18199165 # Creative Commons Attribution-ShareAlike 4.0 International
+    }
+    ?item wdt:P275 ?ccLicense .
+    ?item wdt:P31 ?matchedInstance .
+    BIND(false AS ?isDoc)
+  }`;
+    } else if (category === 'documentary_film') {
         wherePattern = docFilmBranch;
     } else if (category !== 'all' && PUBLIC_DOMAIN_INSTANCE_MAP[category]) {
         const targetQid = PUBLIC_DOMAIN_INSTANCE_MAP[category].qid;
@@ -737,34 +803,45 @@ export const buildPublicDomainProductionsSparql = (
     ?item wdt:P31 wd:${targetQid} .
     ?item wdt:P6216 wd:Q19652 .
     BIND(wd:${targetQid} AS ?matchedInstance)
+    BIND(wd:Q19652 AS ?ccLicense)
     BIND(false AS ?isDoc)
   }`;
     } else {
-        const allQids = Object.values(PUBLIC_DOMAIN_INSTANCE_MAP)
-            .map((entry) => `wd:${entry.qid}`)
-            .join(' ');
         wherePattern = `{
-    VALUES ?matchedInstance { ${allQids} }
+    VALUES ?matchedInstance { ${allVisualQids} }
     ?item wdt:P31 ?matchedInstance .
     ?item wdt:P6216 wd:Q19652 .
+    BIND(wd:Q19652 AS ?ccLicense)
     BIND(false AS ?isDoc)
   }
   UNION
   ${docFilmBranch}`;
     }
 
+    const titleTriple = options.onlyWithTitle
+        ? `  ?item wdt:P1476 ?p1476Title .`
+        : `  OPTIONAL { ?item wdt:P1476 ?p1476Title . }`;
+
+    const imageTriple = options.onlyWithImage
+        ? `  ?item wdt:P18 ?image .`
+        : `  OPTIONAL { ?item wdt:P18 ?image . }`;
+
     return `SELECT ?item
   (SAMPLE(?p1476Title) AS ?titleP1476)
   (SAMPLE(?itemLabel) AS ?label)
+  (SAMPLE(?ptLabelRaw) AS ?labelPt)
   (SAMPLE(?itemDescription) AS ?description)
   (SAMPLE(?descEnRaw) AS ?descriptionEn)
   (SAMPLE(?descPtRaw) AS ?descriptionPt)
   (SAMPLE(?matchedInstance) AS ?instanceEntity)
   (SAMPLE(?matchedInstanceLabel) AS ?instanceName)
   (MAX(?isDoc) AS ?isDocumentaryFlag)
+  (SAMPLE(?ccLicense) AS ?licenseEntity)
+  (SAMPLE(?ccLicenseLabel) AS ?licenseName)
   (SAMPLE(?langLabel) AS ?origLang)
   (SAMPLE(?pubDate) AS ?date)
   (GROUP_CONCAT(DISTINCT ?directorLabel; SEPARATOR=", ") AS ?director)
+  (GROUP_CONCAT(DISTINCT ?producerLabel; SEPARATOR=", ") AS ?producer)
   (SAMPLE(?durVal) AS ?durationMinutes)
   (GROUP_CONCAT(DISTINCT ?genreLabel; SEPARATOR="|") AS ?genresList)
   (GROUP_CONCAT(DISTINCT ?subjectLabel; SEPARATOR="|") AS ?themesList)
@@ -777,16 +854,18 @@ export const buildPublicDomainProductionsSparql = (
   (SAMPLE(?commonsStr) AS ?commons)
 WHERE {
   ${wherePattern}
-  OPTIONAL { ?item wdt:P1476 ?p1476Title . }
+${titleTriple}
+  OPTIONAL { ?item rdfs:label ?ptLabelRaw . FILTER(LANG(?ptLabelRaw) = "pt") }
   OPTIONAL { ?item schema:description ?descEnRaw . FILTER(LANG(?descEnRaw) = "en") }
   OPTIONAL { ?item schema:description ?descPtRaw . FILTER(LANG(?descPtRaw) = "pt") }
   OPTIONAL { ?item wdt:P364 ?lang . ?lang rdfs:label ?langLabel . FILTER(LANG(?langLabel) IN ("pt", "en")) }
   OPTIONAL { ?item wdt:P577 ?pubDate . }
   OPTIONAL { ?item wdt:P57 ?dir . }
+  OPTIONAL { ?item wdt:P162 ?prod . }
   OPTIONAL { ?item wdt:P2047 ?durVal . }
   OPTIONAL { ?item wdt:P136 ?genreItem . }
   OPTIONAL { ?item wdt:P921 ?subjectItem . }
-  OPTIONAL { ?item wdt:P18 ?image . }
+${imageTriple}
   OPTIONAL { ?item wdt:P724 ?iaId . }
   OPTIONAL { ?item wdt:P345 ?imdbId . }
   OPTIONAL { ?item wdt:P2671 ?gkgId . }
@@ -798,7 +877,9 @@ WHERE {
     ?item rdfs:label ?itemLabel .
     ?item schema:description ?itemDescription .
     ?matchedInstance rdfs:label ?matchedInstanceLabel .
+    ?ccLicense rdfs:label ?ccLicenseLabel .
     ?dir rdfs:label ?directorLabel .
+    ?prod rdfs:label ?producerLabel .
     ?genreItem rdfs:label ?genreLabel .
     ?subjectItem rdfs:label ?subjectLabel .
   }
@@ -810,13 +891,15 @@ LIMIT ${limit}`;
 
 /**
  * Pesquisa no Wikidata produções visuais em domínio público (P6216=Q19652)
+ * e produções Open-source / Creative Commons (Q917641, P6216=Q18810333, P275 CC)
  * importando metadados completos (P136 genres, P921 themes/main subject, P57 director, P2047 duration, etc.)
  */
 export const searchPublicDomainProductionsInWikidata = async (
     category: PublicDomainProductionCategory = 'all',
-    limit: number = 150
+    limit: number = 150,
+    options: PublicDomainSearchOptions = {}
 ): Promise<WikidataPublicDomainProduction[]> => {
-    const sparql = buildPublicDomainProductionsSparql(category, limit);
+    const sparql = buildPublicDomainProductionsSparql(category, limit, options);
     const data = await executeSparqlQuery(sparql);
     if (!data || !data.results || !data.results.bindings) {
         throw new Error("Não foi possível obter resposta do Wikidata SPARQL no momento.");
@@ -841,6 +924,15 @@ export const searchPublicDomainProductionsInWikidata = async (
             const instanceLabel = isDocumentary
                 ? "documentary film"
                 : mappedType || b.instanceName?.value || "film";
+
+            const licenseQid = b.licenseEntity?.value?.split("/").pop()?.toUpperCase() || "";
+            const licenseName = b.licenseName?.value || "";
+            let licenseLabel = "Public Domain (Q19652)";
+            if (licenseQid && licenseQid !== "Q19652") {
+                licenseLabel = licenseName ? `${licenseName} (${licenseQid})` : licenseQid;
+            } else if (!licenseQid && instanceQid === "Q917641") {
+                licenseLabel = "Open-source film (Q917641)";
+            }
 
             let year = 0;
             if (b.date?.value) {
@@ -867,16 +959,22 @@ export const searchPublicDomainProductionsInWikidata = async (
             const descriptionEn = b.descriptionEn?.value || "";
             const descriptionPt = b.descriptionPt?.value || "";
             const descriptionFallback = b.description?.value || descriptionEn || descriptionPt || "";
-            const directorName = b.director?.value ? sanitizeWikidataListValue(b.director.value) : "";
+            const directorFromP57 = b.director?.value ? sanitizeWikidataListValue(b.director.value) : "";
+            const producerFromP162 = b.producer?.value ? sanitizeWikidataListValue(b.producer.value) : "";
+            const directorName = directorFromP57 || producerFromP162;
             const genres = parseCleanPipeList(b.genresList?.value);
             if (isDocumentary && !genres.some((g) => g.toLowerCase().includes("documentary"))) {
                 genres.unshift("Documentary");
             }
             const themes = parseCleanPipeList(b.themesList?.value);
 
+            const labelPt = b.labelPt?.value || "";
+
             return {
                 wikidataId: qid,
                 originalTitle: titleP1476 || label,
+                titlePt: labelPt || undefined,
+                wikidataLabel: label,
                 hasP1476: Boolean(titleP1476),
                 instanceQid,
                 instanceLabel,
@@ -891,6 +989,7 @@ export const searchPublicDomainProductionsInWikidata = async (
                 duration,
                 genres,
                 themes,
+                licenseLabel,
                 posterUrl: b.posterImage?.value ? getWikimediaThumbnail(b.posterImage.value, 600) : "",
                 videoUrl: iaId ? `https://archive.org/download/${iaId}/${iaId}.mp4` : "",
                 hasVideo: Boolean(iaId),

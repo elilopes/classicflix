@@ -3,8 +3,8 @@ import { getSupabase } from './bd';
 import { updateSupabaseMovie } from './supabaseClient';
 import { fetchMovieIdentifiers } from './videoSourceService';
 
-const TMDB_API_KEY = 'e6a44aa8865934c03ad582bc72c5b85d';
-const OMDB_API_KEY = 'dc3946fe';
+const TMDB_API_KEY = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_TMDB_API_KEY) || 'e6a44aa8865934c03ad582bc72c5b85d';
+const OMDB_API_KEY = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_OMDB_KEY) || 'dc3946fe';
 
 export interface BannerSearchResult {
     success: boolean;

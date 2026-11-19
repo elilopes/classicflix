@@ -10,6 +10,7 @@ import { addSupabaseMovie, getExistingWikidataIds } from '../services/supabaseCl
 import { extractMetadataFromUrl } from '../services/geminiService';
 import { searchOmdbMovies, getOmdbMovieDetails } from '../services/omdbService';
 import { fetchMovieByQid, findPublicDomainMovies } from '../services/wikidataService';
+import { translateWikidataMetadata } from '../services/translateService';
 import { searchTvMaze, getTvMazeDetails } from '../services/tvmazeService';
 import { searchOfdb } from '../services/ofdbService';
 import { searchTmdbMovies, getTmdbMovieDetails } from '../services/tmdbService';
@@ -121,11 +122,18 @@ export const AddMovieModal: React.FC<AddMovieModalProps> = ({ onClose, onSuccess
         const qid = wikidataMatch[1];
         const movie = await fetchMovieByQid(qid);
         if (movie) {
+          const translated = await translateWikidataMetadata({
+            title: movie.titlePt ? undefined : movie.title,
+            genres: movie.genres,
+            themes: movie.themes,
+            to: 'pt',
+          }).catch(() => null);
           setMovieData({
             ...movie,
+            titlePt: movie.titlePt || translated?.titlePt || undefined,
             id: `db-${Date.now()}`,
-            genres: movie.genres || [],
-            themes: movie.themes || [],
+            genres: translated?.genresPt?.length ? translated.genresPt : (movie.genres || []),
+            themes: translated?.themesPt?.length ? translated.themesPt : (movie.themes || []),
             cast: movie.cast || [],
             videoUrl: url.includes('archive.org') ? url : movie.videoUrl
           });
@@ -287,11 +295,18 @@ export const AddMovieModal: React.FC<AddMovieModalProps> = ({ onClose, onSuccess
           const movie = await fetchMovieByQid(qid);
           
           if (movie) {
+              const translated = await translateWikidataMetadata({
+                  title: movie.titlePt ? undefined : movie.title,
+                  genres: movie.genres,
+                  themes: movie.themes,
+                  to: 'pt',
+              }).catch(() => null);
               setMovieData({
                   ...movie,
+                  titlePt: movie.titlePt || translated?.titlePt || undefined,
                   id: `db-${Date.now()}`,
-                  genres: movie.genres || [],
-                  themes: movie.themes || [],
+                  genres: translated?.genresPt?.length ? translated.genresPt : (movie.genres || []),
+                  themes: translated?.themesPt?.length ? translated.themesPt : (movie.themes || []),
                   cast: movie.cast || [],
               });
           } else {
@@ -324,8 +339,17 @@ export const AddMovieModal: React.FC<AddMovieModalProps> = ({ onClose, onSuccess
       try {
           const details = await fetchMovieByQid(movie.wikidataId!);
           if (details) {
+              const translated = await translateWikidataMetadata({
+                  title: details.titlePt ? undefined : details.title,
+                  genres: details.genres,
+                  themes: details.themes,
+                  to: 'pt',
+              }).catch(() => null);
               setMovieData({
                   ...details,
+                  titlePt: details.titlePt || translated?.titlePt || undefined,
+                  genres: translated?.genresPt?.length ? translated.genresPt : (details.genres || []),
+                  themes: translated?.themesPt?.length ? translated.themesPt : (details.themes || []),
                   id: `db-${Date.now()}`
               });
           }

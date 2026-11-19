@@ -1,7 +1,7 @@
 import { Movie } from '../types';
 
-const RAPID_API_KEY = '8d0b2005e5msh7794ca50aee0eb4p14f460jsn249cb3b9d70b';
-const RAPID_API_HOST = 'rottentomato.p.rapidapi.com';
+const RAPID_API_KEY = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_RAPID_API_KEY) || '8d0b2005e5msh7794ca50aee0eb4p14f460jsn249cb3b9d70b';
+const RAPID_API_HOST = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_RAPID_API_HOST_ROTTEN) || 'rottentomato.p.rapidapi.com';
 
 export interface RTResult {
     title: string;
