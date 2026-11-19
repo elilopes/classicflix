@@ -27,6 +27,7 @@ export interface TmdbMetadataCandidate {
   rating: string;
   imdbId: string;
   pageUrl: string;
+  mediaType: 'movie' | 'tv';
 }
 
 export interface WikidataEnrichmentResult {
@@ -167,27 +168,73 @@ const searchArchiveItems = async (
   return candidates;
 };
 
-const searchTmdb = async (title: string, year: number, imdbId?: string, knownTmdbId?: string): Promise<TmdbMetadataCandidate[]> => {
+const getTmdbTvDetails = async (id: string): Promise<any | null> => {
+  const key = import.meta.env.VITE_TMDB_API_KEY || 'e6a44aa8865934c03ad582bc72c5b85d';
+  const response = await fetch(`https://api.themoviedb.org/3/tv/${encodeURIComponent(id)}?api_key=${key}&language=pt-BR&append_to_response=aggregate_credits,external_ids`);
+  if (!response.ok) return null;
+  const data = await response.json();
+  const crew = data.aggregate_credits?.crew || [];
+  const director = crew.find((person: any) => person.jobs?.some((job: any) => job.job === 'Director'))?.name ||
+    (data.created_by || []).map((person: any) => person.name).join(', ') || '';
+  const cast = (data.aggregate_credits?.cast || []).slice(0, 10).map((person: any) => person.name);
+  return {
+    title: data.name,
+    originalTitle: data.original_name,
+    description: data.overview,
+    year: data.first_air_date ? new Date(data.first_air_date).getFullYear() : 0,
+    posterUrl: data.poster_path ? `https://image.tmdb.org/t/p/w342${data.poster_path}` : '',
+    director,
+    genres: (data.genres || []).map((genre: any) => genre.name),
+    duration: data.episode_run_time?.[0] ? `${data.episode_run_time[0]}m` : '',
+    rating: data.vote_average !== undefined ? Number(data.vote_average).toFixed(1) : '',
+    wikidataId: data.external_ids?.imdb_id || '',
+    cast,
+  };
+};
+
+const searchTmdb = async (
+  title: string,
+  year: number,
+  imdbId?: string,
+  knownTmdbId?: string,
+  isTv = false,
+): Promise<TmdbMetadataCandidate[]> => {
   const candidates: TmdbMetadataCandidate[] = [];
+  const getDetails = (id: string) => isTv ? getTmdbTvDetails(id) : getTmdbMovieDetails(id, 'pt-BR');
+
   if (knownTmdbId && /^\\d+$/.test(knownTmdbId)) {
-    const details = await getTmdbMovieDetails(knownTmdbId, 'pt-BR');
-    if (details) candidates.push(mapTmdbCandidate(knownTmdbId, details));
+    const details = await getDetails(knownTmdbId);
+    if (details) candidates.push(mapTmdbCandidate(knownTmdbId, details, isTv));
   }
+
   if (candidates.length === 0 && imdbId) {
-    const response = await fetch(
-      `https://api.themoviedb.org/3/find/${encodeURIComponent(imdbId)}?api_key=${import.meta.env.VITE_TMDB_API_KEY || 'e6a44aa8865934c03ad582bc72c5b85d'}&external_source=imdb_id&language=pt-BR`
-    );
+    const key = import.meta.env.VITE_TMDB_API_KEY || 'e6a44aa8865934c03ad582bc72c5b85d';
+    const response = await fetch(`https://api.themoviedb.org/3/find/${encodeURIComponent(imdbId)}?api_key=${key}&external_source=imdb_id&language=pt-BR`);
     if (response.ok) {
       const data = await response.json();
-      const found = data.movie_results?.[0];
+      const found = isTv ? data.tv_results?.[0] : data.movie_results?.[0];
       if (found?.id) {
-        const details = await getTmdbMovieDetails(String(found.id), 'pt-BR');
-        if (details) candidates.push(mapTmdbCandidate(String(found.id), details));
+        const details = await getDetails(String(found.id));
+        if (details) candidates.push(mapTmdbCandidate(String(found.id), details, isTv));
       }
     }
   }
+
   if (candidates.length === 0) {
-    const results = await searchTmdbMovies(title, 'pt-BR');
+    const key = import.meta.env.VITE_TMDB_API_KEY || 'e6a44aa8865934c03ad582bc72c5b85d';
+    const results = isTv
+      ? await (async () => {
+          const response = await fetch(`https://api.themoviedb.org/3/search/tv?api_key=${key}&query=${encodeURIComponent(title)}&language=pt-BR`);
+          if (!response.ok) return [];
+          const data = await response.json();
+          return (data.results || []).map((entry: any) => ({
+            id: `tmdb-${entry.id}`,
+            title: entry.name,
+            originalTitle: entry.original_name,
+            year: entry.first_air_date ? new Date(entry.first_air_date).getFullYear() : 0,
+          }));
+        })()
+      : await searchTmdbMovies(title, 'pt-BR');
     const ranked = results
       .map((result: any) => {
         const titleScore = normalize(result.originalTitle || result.title) === normalize(title) ? 2 : 0;
@@ -199,14 +246,14 @@ const searchTmdb = async (title: string, year: number, imdbId?: string, knownTmd
       .slice(0, 3);
     for (const entry of ranked) {
       const id = clean(entry.result.id).replace(/^tmdb-/, '');
-      const details = await getTmdbMovieDetails(id, 'pt-BR');
-      if (details) candidates.push(mapTmdbCandidate(id, details));
+      const details = await getDetails(id);
+      if (details) candidates.push(mapTmdbCandidate(id, details, isTv));
     }
   }
   return candidates;
 };
 
-const mapTmdbCandidate = (id: string, details: any): TmdbMetadataCandidate => ({
+const mapTmdbCandidate = (id: string, details: any, isTv = false): TmdbMetadataCandidate => ({
   tmdbId: id,
   title: clean(details.title),
   originalTitle: clean(details.originalTitle),
@@ -218,7 +265,8 @@ const mapTmdbCandidate = (id: string, details: any): TmdbMetadataCandidate => ({
   duration: clean(details.duration),
   rating: clean(details.rating),
   imdbId: clean(details.wikidataId),
-  pageUrl: `https://www.themoviedb.org/movie/${id}`,
+  pageUrl: `https://www.themoviedb.org/${isTv ? 'tv' : 'movie'}/${id}`,
+  mediaType: isTv ? 'tv' : 'movie',
 });
 
 export const loadWikidataEnrichment = async (
@@ -234,7 +282,7 @@ export const loadWikidataEnrichment = async (
     fetchMovieIdentifiers(item.wikidataId),
     searchCommonsImages(item.originalTitle, item.posterUrl),
     searchArchiveItems(item.originalTitle, item.year, item.archiveId),
-    searchTmdb(item.originalTitle, item.year, item.imdbId, item.tmdbId),
+    searchTmdb(item.originalTitle, item.year, item.imdbId, item.tmdbId, item.instanceQid === 'Q5398426'),
   ]);
 
   if (ids.status === 'fulfilled') {
@@ -264,7 +312,7 @@ export const loadWikidataEnrichment = async (
           source_id: candidate.tmdbId,
           url: candidate.posterUrl,
           page_url: candidate.pageUrl,
-          metadata: { title: candidate.title, year: candidate.year, rating: candidate.rating },
+          metadata: { title: candidate.title, year: candidate.year, rating: candidate.rating, tmdbMediaType: candidate.mediaType },
         });
       }
     }
