@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import React, { useEffect, useMemo, useState } from 'react';
 import { Check, ExternalLink, Loader2, RefreshCw, X } from 'lucide-react';
 import { Movie } from '../types';
@@ -151,6 +152,13 @@ export const WikidataImportReview: React.FC<Props> = ({ item, existingMovie, onC
     });
   };
 
+  const useMediaAsVideo = (candidate: ImportMediaCandidate) => {
+    setDraft((current: any) => ({ ...current, videoUrl: candidate.url }));
+    setSelectedFields((current) => new Set(current).add('videoUrl'));
+    setSourceByField((current) => ({ ...current, videoUrl: { source: candidate.source, url: candidate.page_url || candidate.url } }));
+    setSelectedMedia((current) => new Set(current).add(candidate.id));
+  };
+
   const useMediaAsPoster = (candidate: ImportMediaCandidate) => {
     setDraft((current: any) => ({ ...current, posterUrl: candidate.url }));
     setSelectedFields((current) => new Set(current).add('posterUrl'));
@@ -289,7 +297,8 @@ export const WikidataImportReview: React.FC<Props> = ({ item, existingMovie, onC
                   {candidate.media_type === 'poster' || candidate.media_type === 'still' ? <img src={candidate.url} alt="" className="mt-2 rounded" style={{maxHeight:150,maxWidth:'100%',objectFit:'contain'}}/> : <div className="small text-secondary mt-2 text-break">{candidate.url}</div>}
                   <div className="small text-secondary mt-1">Licença: {candidate.license || 'Não informada — verificar antes de publicar'}</div>
                   {candidate.attribution && <div className="small text-secondary">Crédito: {candidate.attribution}</div>}
-                  {candidate.media_type === 'poster' || candidate.media_type === 'still' ? <button className="btn btn-sm btn-outline-light mt-2" onClick={() => useMediaAsPoster(candidate)}>Usar como pôster principal</button> : null}
+                  {(candidate.media_type === 'poster' || candidate.media_type === 'still') ? <button className="btn btn-sm btn-outline-light mt-2" onClick={() => useMediaAsPoster(candidate)}>Usar como pôster principal</button> : null}
+                  {(candidate.media_type === 'video' || candidate.media_type === 'trailer') ? <button className="btn btn-sm btn-outline-light mt-2" onClick={() => useMediaAsVideo(candidate)}>Usar como vídeo principal</button> : null}
                 </div>
               </div>
             ))}
