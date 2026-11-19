@@ -1193,18 +1193,17 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                                       </a>
                                     </td>
                                     <td className="small">
-                                      {alreadyExists ? (
-                                        <span className="badge bg-success">Já cadastrado</span>
-                                      ) : (
+                                      <div className="d-flex flex-column align-items-start gap-1">
+                                        {alreadyExists && <span className="badge bg-success">Já cadastrado</span>}
                                         <button
                                           type="button"
-                                          className="btn btn-sm btn-outline-success py-0 px-2 d-inline-flex align-items-center gap-1"
+                                          className={`btn btn-sm py-0 px-2 d-inline-flex align-items-center gap-1 ${alreadyExists ? 'btn-outline-info' : 'btn-outline-success'}`}
                                           onClick={() => handleImportSeries(item)}
                                         >
-                                          <PlusCircle size={12} />
-                                          <span>Importar</span>
+                                          {alreadyExists ? <RefreshCw size={12}/> : <PlusCircle size={12}/>}
+                                          <span>{alreadyExists ? 'Revisar atualização' : 'Importar'}</span>
                                         </button>
-                                      )}
+                                      </div>
                                     </td>
                                   </tr>
                                 );
