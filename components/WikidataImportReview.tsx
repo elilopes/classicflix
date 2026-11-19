@@ -21,6 +21,7 @@ interface Props {
   existingMovie?: Movie;
   onClose: () => void;
   onSaved: () => void;
+  onPreparePoster?: (qid: string, url: string) => Promise<{ posterUrl: string; driveNote?: string; warningNote?: string }>;
 }
 
 const fields: Array<{ key: ImportField; label: string }> = [
@@ -89,7 +90,7 @@ const existingValue = (movie: Movie | undefined, key: ImportField): unknown => {
   }
 };
 
-export const WikidataImportReview: React.FC<Props> = ({ item, existingMovie, onClose, onSaved }) => {
+export const WikidataImportReview: React.FC<Props> = ({ item, existingMovie, onClose, onSaved, onPreparePoster }) => {
   const isUpdate = Boolean(existingMovie);
   const [draft, setDraft] = useState<any>(() => initialDraft(item));
   const [selectedFields, setSelectedFields] = useState<Set<ImportField>>(
@@ -101,6 +102,8 @@ export const WikidataImportReview: React.FC<Props> = ({ item, existingMovie, onC
   const [selectedTmdbId, setSelectedTmdbId] = useState('');
   const [sourceByField, setSourceByField] = useState<Record<string, { source: string; url: string }>>({});
   const [saving, setSaving] = useState(false);
+  const [preparingPoster, setPreparingPoster] = useState(false);
+  const [posterNote, setPosterNote] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -160,11 +163,23 @@ export const WikidataImportReview: React.FC<Props> = ({ item, existingMovie, onC
     setSelectedMedia((current) => new Set(current).add(candidate.id));
   };
 
-  const useMediaAsPoster = (candidate: ImportMediaCandidate) => {
-    setDraft((current: any) => ({ ...current, posterUrl: candidate.url }));
-    setSelectedFields((current) => new Set(current).add('posterUrl'));
-    setSourceByField((current) => ({ ...current, posterUrl: { source: candidate.source, url: candidate.page_url || candidate.url } }));
-    setSelectedMedia((current) => new Set(current).add(candidate.id));
+  const useMediaAsPoster = async (candidate: ImportMediaCandidate) => {
+    setPreparingPoster(true);
+    setPosterNote('');
+    try {
+      const prepared = onPreparePoster
+        ? await onPreparePoster(item.wikidataId, candidate.url)
+        : { posterUrl: candidate.url };
+      setDraft((current: any) => ({ ...current, posterUrl: prepared.posterUrl || candidate.url }));
+      setSelectedFields((current) => new Set(current).add('posterUrl'));
+      setSourceByField((current) => ({ ...current, posterUrl: { source: candidate.source, url: candidate.page_url || candidate.url } }));
+      setSelectedMedia((current) => new Set(current).add(candidate.id));
+      setPosterNote([prepared.driveNote, prepared.warningNote].filter(Boolean).join(' '));
+    } catch (err: any) {
+      setError(err?.message || 'Não foi possível preparar o pôster selecionado.');
+    } finally {
+      setPreparingPoster(false);
+    }
   };
 
   const oldAndNew = useMemo(() => fields.map((field) => ({
@@ -259,6 +274,7 @@ export const WikidataImportReview: React.FC<Props> = ({ item, existingMovie, onC
           </div>
 
           <div className="small text-secondary mb-2">YouTube utiliza o vídeo vinculado no Wikidata (P1651); não é feita busca genérica por título. Todos os resultados externos precisam ser aprovados antes de entrar na ficha.</div>
+          {posterNote && <div className="small text-info mb-2">{posterNote}</div>}
           {enrichment?.warnings.map((warning) => <div key={warning} className="small text-warning">{warning}</div>)}
 
           {enrichment?.tmdb.length ? (
@@ -299,7 +315,7 @@ export const WikidataImportReview: React.FC<Props> = ({ item, existingMovie, onC
                   {candidate.media_type === 'poster' || candidate.media_type === 'still' ? <img src={candidate.url} alt="" className="mt-2 rounded" style={{maxHeight:150,maxWidth:'100%',objectFit:'contain'}}/> : <div className="small text-secondary mt-2 text-break">{candidate.url}</div>}
                   <div className="small text-secondary mt-1">Licença: {candidate.license || 'Não informada — verificar antes de publicar'}</div>
                   {candidate.attribution && <div className="small text-secondary">Crédito: {candidate.attribution}</div>}
-                  {(candidate.media_type === 'poster' || candidate.media_type === 'still') ? <button className="btn btn-sm btn-outline-light mt-2" onClick={() => useMediaAsPoster(candidate)}>Usar como pôster principal</button> : null}
+                  {(candidate.media_type === 'poster' || candidate.media_type === 'still') ? <button className="btn btn-sm btn-outline-light mt-2" onClick={() => useMediaAsPoster(candidate)} disabled={preparingPoster}>{preparingPoster ? 'Preparando pôster…' : 'Usar como pôster principal'}</button> : null}
                   {candidate.media_type === 'video' ? <button className="btn btn-sm btn-outline-light mt-2" onClick={() => useMediaAsVideo(candidate)}>Usar como vídeo principal</button> : null}
                   {candidate.media_type === 'trailer' ? <button className="btn btn-sm btn-outline-light mt-2" onClick={() => useMediaAsVideo(candidate)}>Usar como trailer</button> : null}
                 </div>
