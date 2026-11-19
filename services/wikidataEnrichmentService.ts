@@ -270,7 +270,7 @@ export const loadWikidataEnrichment = async (
     result.media.push({
       id: `youtube:${result.identifiers.youtubeId}`,
       source: 'youtube',
-      media_type: 'video',
+      media_type: 'trailer',
       source_id: result.identifiers.youtubeId,
       url: `https://www.youtube.com/watch?v=${result.identifiers.youtubeId}`,
       page_url: `https://www.youtube.com/watch?v=${result.identifiers.youtubeId}`,
