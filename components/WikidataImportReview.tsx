@@ -14,7 +14,7 @@ import { persistWikidataProduction } from '../services/supabaseClient';
 type ImportField =
   | 'title' | 'titlePt' | 'originalTitle' | 'year' | 'language' | 'posterUrl'
   | 'videoUrl' | 'trailerUrl' | 'descriptionEn' | 'descriptionPt'
-  | 'director' | 'duration' | 'genres' | 'themes' | 'license' | 'identifiers';
+  | 'director' | 'duration' | 'genres' | 'themes' | 'cast' | 'rating' | 'license' | 'identifiers';
 
 interface Props {
   item: WikidataPublicDomainProduction;
@@ -36,6 +36,8 @@ const fields: Array<{ key: ImportField; label: string }> = [
   { key: 'duration', label: 'Duração' },
   { key: 'genres', label: 'Gêneros' },
   { key: 'themes', label: 'Temas' },
+  { key: 'cast', label: 'Elenco' },
+  { key: 'rating', label: 'Avaliação TMDb' },
   { key: 'posterUrl', label: 'Pôster principal' },
   { key: 'videoUrl', label: 'Vídeo principal' },
   { key: 'trailerUrl', label: 'Trailer' },
@@ -61,6 +63,8 @@ const initialDraft = (item: WikidataPublicDomainProduction) => ({
   duration: item.duration || '',
   genres: item.genres || [],
   themes: item.themes || [],
+  cast: [],
+  rating: '',
   posterUrl: '',
   videoUrl: '',
   trailerUrl: '',
@@ -135,6 +139,8 @@ export const WikidataImportReview: React.FC<Props> = ({ item, existingMovie, onC
       descriptionEn: candidate.overview || current.descriptionEn,
       director: candidate.director || current.director,
       genres: candidate.genres?.length ? candidate.genres : current.genres,
+      cast: candidate.cast?.length ? candidate.cast : current.cast,
+      rating: candidate.rating || current.rating,
       duration: candidate.duration || current.duration,
       posterUrl: candidate.posterUrl || current.posterUrl,
       identifiers: { ...current.identifiers, tmdbId: candidate.tmdbId, imdbId: candidate.imdbId || current.identifiers.imdbId },
@@ -142,7 +148,7 @@ export const WikidataImportReview: React.FC<Props> = ({ item, existingMovie, onC
     const url = candidate.pageUrl;
     setSourceByField((current) => ({
       ...current,
-      ...Object.fromEntries(['title','originalTitle','year','descriptionEn','director','genres','duration','posterUrl','identifiers'].map((key) => [key, { source: 'tmdb', url }])),
+      ...Object.fromEntries(['title','originalTitle','year','descriptionEn','director','genres','cast','rating','duration','posterUrl','identifiers'].map((key) => [key, { source: 'tmdb', url }])),
     }));
   };
 
