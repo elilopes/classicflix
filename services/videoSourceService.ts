@@ -47,12 +47,13 @@ export const fetchMovieIdentifiers = async (qid: string): Promise<{
 
     const endpoint = "https://query.wikidata.org/sparql";
     const sparqlQuery = `
-        SELECT ?archive ?archiveAlt ?imdb ?tmdb ?companyTmdb ?commons ?youtube WHERE {
+        SELECT ?archive ?archiveAlt ?imdb ?tmdbMovie ?tmdbTv ?companyTmdb ?commons ?youtube WHERE {
             BIND(wd:${qid} AS ?item)
             OPTIONAL { ?item wdt:P724 ?archive. }
             OPTIONAL { ?item wdt:P1170 ?archiveAlt. }
             OPTIONAL { ?item wdt:P345 ?imdb. }
-            OPTIONAL { ?item wdt:P4985 ?tmdb. }
+            OPTIONAL { ?item wdt:P4947 ?tmdbMovie. }
+            OPTIONAL { ?item wdt:P4985 ?tmdbTv. }
             OPTIONAL { 
                 ?item wdt:P272 ?company. 
                 OPTIONAL { ?company wdt:P3968 ?companyTmdb. }
@@ -80,7 +81,7 @@ export const fetchMovieIdentifiers = async (qid: string): Promise<{
             archiveId: binding.archive?.value || binding.archiveAlt?.value || null,
             imdbId: binding.imdb?.value || null,
             tmdbCompanyId: binding.companyTmdb?.value || null,
-            tmdbId: binding.tmdb?.value || null,
+            tmdbId: binding.tmdbMovie?.value || binding.tmdbTv?.value || null,
             commonsVideo: binding.commons?.value || null,
             youtubeId: binding.youtube?.value || null,
         };
