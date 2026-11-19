@@ -167,9 +167,13 @@ const searchArchiveItems = async (
   return candidates;
 };
 
-const searchTmdb = async (title: string, year: number, imdbId?: string): Promise<TmdbMetadataCandidate[]> => {
+const searchTmdb = async (title: string, year: number, imdbId?: string, knownTmdbId?: string): Promise<TmdbMetadataCandidate[]> => {
   const candidates: TmdbMetadataCandidate[] = [];
-  if (imdbId) {
+  if (knownTmdbId && /^\\d+$/.test(knownTmdbId)) {
+    const details = await getTmdbMovieDetails(knownTmdbId, 'pt-BR');
+    if (details) candidates.push(mapTmdbCandidate(knownTmdbId, details));
+  }
+  if (candidates.length === 0 && imdbId) {
     const response = await fetch(
       `https://api.themoviedb.org/3/find/${encodeURIComponent(imdbId)}?api_key=${import.meta.env.VITE_TMDB_API_KEY || 'e6a44aa8865934c03ad582bc72c5b85d'}&external_source=imdb_id&language=pt-BR`
     );
@@ -230,7 +234,7 @@ export const loadWikidataEnrichment = async (
     fetchMovieIdentifiers(item.wikidataId),
     searchCommonsImages(item.originalTitle, item.posterUrl),
     searchArchiveItems(item.originalTitle, item.year, item.archiveId),
-    searchTmdb(item.originalTitle, item.year, item.imdbId),
+    searchTmdb(item.originalTitle, item.year, item.imdbId, item.tmdbId),
   ]);
 
   if (ids.status === 'fulfilled') {
