@@ -143,3 +143,66 @@ $$ LANGUAGE plpgsql SECURITY DEFINER;
 CREATE OR REPLACE TRIGGER on_auth_user_created
   AFTER INSERT ON auth.users
   FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();
+
+
+-- 11. Tabelas complementares utilizadas pelo importador Wikidata.
+-- A criação é não destrutiva: tabelas e dados existentes são preservados.
+CREATE TABLE IF NOT EXISTS public.description (
+    wikidataid TEXT PRIMARY KEY REFERENCES public.movies(wikidataid) ON DELETE CASCADE,
+    id TEXT,
+    title TEXT,
+    descriptionen TEXT,
+    descriptionpt TEXT,
+    descriptionhi TEXT,
+    descriptionru TEXT,
+    descriptionit TEXT
+);
+
+CREATE TABLE IF NOT EXISTS public.technicaldetails (
+    wikidataid TEXT PRIMARY KEY REFERENCES public.movies(wikidataid) ON DELETE CASCADE,
+    id TEXT,
+    title TEXT,
+    duration TEXT,
+    genres TEXT,
+    director TEXT,
+    sourcelabel TEXT,
+    castmembers TEXT,
+    cinematographers TEXT,
+    composers TEXT,
+    themes TEXT,
+    rating TEXT
+);
+
+CREATE TABLE IF NOT EXISTS public.identifiers (
+    wikidataid TEXT PRIMARY KEY REFERENCES public.movies(wikidataid) ON DELETE CASCADE,
+    archiveid TEXT,
+    imdbid TEXT,
+    omdbid TEXT,
+    openmdbid TEXT,
+    googleknowid TEXT,
+    ofdbid TEXT,
+    commons TEXT,
+    youtube TEXT,
+    updatedat TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE public.description ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.technicaldetails ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.identifiers ENABLE ROW LEVEL SECURITY;
+
+DO $policies$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='description' AND policyname='ClassicFlix public read descriptions') THEN
+        CREATE POLICY "ClassicFlix public read descriptions" ON public.description FOR SELECT TO public USING (true);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='technicaldetails' AND policyname='ClassicFlix public read technical details') THEN
+        CREATE POLICY "ClassicFlix public read technical details" ON public.technicaldetails FOR SELECT TO public USING (true);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE schemaname='public' AND tablename='identifiers' AND policyname='ClassicFlix public read identifiers') THEN
+        CREATE POLICY "ClassicFlix public read identifiers" ON public.identifiers FOR SELECT TO public USING (true);
+    END IF;
+END;
+$policies$;
+
+-- A função de importação é instalada pela migration
+-- supabase/migrations/20261119000100_atomic_wikidata_movie_import.sql.
