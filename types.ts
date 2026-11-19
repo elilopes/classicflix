@@ -45,6 +45,7 @@ export interface Movie {
     tmdbCompanyId?: string;
     tmdbId?: string;
     wikimediaCommons?: string;
+    youtubeId?: string;
   };
 }
 
