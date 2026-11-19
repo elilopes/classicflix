@@ -737,6 +737,7 @@ export interface WikidataPublicDomainProduction {
     ofdbId?: string;
     youtubeId?: string;
     commons?: string;
+    tmdbId?: string;
 }
 
 export interface PublicDomainSearchOptions {
@@ -852,6 +853,8 @@ export const buildPublicDomainProductionsSparql = (
   (SAMPLE(?ofdbId) AS ?ofdb)
   (SAMPLE(?ytId) AS ?youtube)
   (SAMPLE(?commonsStr) AS ?commons)
+  (SAMPLE(?tmdbMovieId) AS ?tmdbMovie)
+  (SAMPLE(?tmdbTvId) AS ?tmdbTv)
 WHERE {
   ${wherePattern}
 ${titleTriple}
@@ -872,6 +875,8 @@ ${imageTriple}
   OPTIONAL { ?item wdt:P3138 ?ofdbId . }
   OPTIONAL { ?item wdt:P1651 ?ytId . }
   OPTIONAL { ?item wdt:P373 ?commonsStr . }
+  OPTIONAL { ?item wdt:P4947 ?tmdbMovieId . }
+  OPTIONAL { ?item wdt:P4985 ?tmdbTvId . }
   SERVICE wikibase:label {
     bd:serviceParam wikibase:language "en,pt,es,fr,de,it,ru".
     ?item rdfs:label ?itemLabel .
@@ -956,6 +961,7 @@ export const searchPublicDomainProductionsInWikidata = async (
             const ofdbId = b.ofdb?.value || "";
             const youtubeId = b.youtube?.value || "";
             const commons = b.commons?.value || "";
+            const tmdbId = b.tmdbMovie?.value || b.tmdbTv?.value || "";
             const descriptionEn = b.descriptionEn?.value || "";
             const descriptionPt = b.descriptionPt?.value || "";
             const descriptionFallback = b.description?.value || descriptionEn || descriptionPt || "";
@@ -999,6 +1005,7 @@ export const searchPublicDomainProductionsInWikidata = async (
                 ofdbId,
                 youtubeId,
                 commons,
+                tmdbId,
             };
         })
         .filter(Boolean) as WikidataPublicDomainProduction[];
