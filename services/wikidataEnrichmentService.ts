@@ -52,9 +52,30 @@ const fetchJson = async (url: string): Promise<any> => {
   return response.json();
 };
 
-const searchCommonsImages = async (title: string): Promise<ImportMediaCandidate[]> => {
+const searchCommonsImages = async (title: string, p18Url?: string): Promise<ImportMediaCandidate[]> => {
   const terms = [`${title} film poster`, `${title} movie poster`];
   const candidates: ImportMediaCandidate[] = [];
+  if (p18Url && p18Url.includes('upload.wikimedia.org')) {
+    try {
+      const fileName = decodeURIComponent(p18Url.split('/').pop() || '').replace(/\?.*$/, '');
+      const directUrl = new URL('https://commons.wikimedia.org/w/api.php');
+      directUrl.search = new URLSearchParams({ action: 'query', titles: `File:${fileName}`, prop: 'imageinfo', iiprop: 'url|extmetadata|mime|size', format: 'json', origin: '*' }).toString();
+      const directData = await fetchJson(directUrl.toString());
+      const page = Object.values(directData.query?.pages || {})[0] as any;
+      const info = page?.imageinfo?.[0];
+      if (info?.url) {
+        const meta = info.extmetadata || {};
+        const license = clean(meta.LicenseShortName?.value || meta.License?.value);
+        const artist = clean(meta.Artist?.value).replace(/<[^>]*>/g, '');
+        candidates.push({
+          id: `commons-p18:${fileName}`, source: 'commons', media_type: 'poster', source_id: fileName,
+          url: info.thumburl || info.url, page_url: `https://commons.wikimedia.org/wiki/File:${encodeURIComponent(fileName)}`,
+          license: license || undefined, attribution: clean(meta.Attribution?.value || meta.Credit?.value).replace(/<[^>]*>/g, '') || artist || undefined,
+          metadata: { sourceProperty: 'Wikidata P18', mime: info.mime, width: info.width, height: info.height, artist },
+        });
+      }
+    } catch { /* continue with title-based Commons search */ }
+  }
   for (const term of terms) {
     const url = new URL('https://commons.wikimedia.org/w/api.php');
     url.search = new URLSearchParams({
@@ -207,7 +228,7 @@ export const loadWikidataEnrichment = async (
   };
   const [ids, commons, archive, tmdb] = await Promise.allSettled([
     fetchMovieIdentifiers(item.wikidataId),
-    searchCommonsImages(item.originalTitle),
+    searchCommonsImages(item.originalTitle, item.posterUrl),
     searchArchiveItems(item.originalTitle, item.year, item.archiveId),
     searchTmdb(item.originalTitle, item.year, item.imdbId),
   ]);
