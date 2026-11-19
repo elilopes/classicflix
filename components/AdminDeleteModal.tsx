@@ -96,7 +96,6 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
   const [onlyWithP1476, setOnlyWithP1476] = useState(false);
   const [onlyWithVideo, setOnlyWithVideo] = useState(false);
   const [onlyMissingInCatalog, setOnlyMissingInCatalog] = useState(false);
-  const [importingQid, setImportingQid] = useState<string | null>(null);
   const [showSparqlScript, setShowSparqlScript] = useState(false);
   const [copiedSparql, setCopiedSparql] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
@@ -592,6 +591,11 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
     } finally {
       setIsTranslatingPdList(false);
     }
+  };
+
+  const preparePosterForReview = async (qid: string, url: string) => {
+    if (!savePosterToDrive) return { posterUrl: url };
+    return resolvePosterUrlForImport(qid, url);
   };
 
   const handleLoadImportHistory = async () => {
@@ -1196,7 +1200,6 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                                           type="button"
                                           className="btn btn-sm btn-outline-success py-0 px-2 d-inline-flex align-items-center gap-1"
                                           onClick={() => handleImportSeries(item)}
-                                          disabled={importingQid === item.wikidataId}
                                         >
                                           {importingQid === item.wikidataId ? (
                                             <Loader2 size={12} className="animate-spin" />
@@ -1656,7 +1659,6 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                                         type="button"
                                         className={`btn btn-sm py-0 px-2 d-inline-flex align-items-center gap-1 ${alreadyExists ? 'btn-outline-info' : 'btn-outline-success'}`}
                                         onClick={() => setReviewingPdItem(item)}
-                                        disabled={importingQid === item.wikidataId}
                                       >
                                         {alreadyExists ? <RefreshCw size={12}/> : <PlusCircle size={12}/>}
                                         <span>{alreadyExists ? 'Revisar atualização' : (t.adminPdImport || 'Importar')}</span>
@@ -1732,6 +1734,7 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
         item={reviewingPdItem}
         existingMovie={movies.find((movie) => movie.wikidataId?.trim().toUpperCase() === reviewingPdItem.wikidataId.toUpperCase())}
         onClose={() => setReviewingPdItem(null)}
+        onPreparePoster={preparePosterForReview}
         onSaved={() => { setReviewingPdItem(null); onRefresh(); }}
       />
     )}
