@@ -133,10 +133,11 @@ export const WikidataImportReview: React.FC<Props> = ({ item, existingMovie, onC
     setSelectedTmdbId(candidate.tmdbId);
     setDraft((current: any) => ({
       ...current,
-      title: candidate.title || current.title,
+      title: candidate.originalTitle || current.title,
+      titlePt: candidate.title || current.titlePt,
       originalTitle: candidate.originalTitle || current.originalTitle,
       year: candidate.year || current.year,
-      descriptionEn: candidate.overview || current.descriptionEn,
+      descriptionPt: candidate.overviewPt || current.descriptionPt,
       director: candidate.director || current.director,
       genres: candidate.genres?.length ? candidate.genres : current.genres,
       cast: candidate.cast?.length ? candidate.cast : current.cast,
@@ -148,7 +149,7 @@ export const WikidataImportReview: React.FC<Props> = ({ item, existingMovie, onC
     const url = candidate.pageUrl;
     setSourceByField((current) => ({
       ...current,
-      ...Object.fromEntries(['title','originalTitle','year','descriptionEn','director','genres','cast','rating','duration','posterUrl','identifiers'].map((key) => [key, { source: 'tmdb', url }])),
+      ...Object.fromEntries(['title','titlePt','originalTitle','year','descriptionPt','director','genres','cast','rating','duration','posterUrl','identifiers'].map((key) => [key, { source: 'tmdb', url }])),
     }));
   };
 
