@@ -1730,7 +1730,17 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
         existingMovie={movies.find((movie) => movie.wikidataId?.trim().toUpperCase() === reviewingPdItem.wikidataId.toUpperCase())}
         onClose={() => setReviewingPdItem(null)}
         onPreparePoster={preparePosterForReview}
-        onSaved={() => { setReviewingPdItem(null); onRefresh(); }}
+        onSaved={() => {
+          const wasExisting = movies.some((movie) => movie.wikidataId?.trim().toUpperCase() === reviewingPdItem.wikidataId.toUpperCase());
+          setStatusMessage({
+            type: 'success',
+            text: wasExisting
+              ? `Metadados selecionados de ${reviewingPdItem.wikidataId} atualizados e registrados no histórico.`
+              : `Produção ${reviewingPdItem.wikidataId} importada e registrada no histórico.`,
+          });
+          setReviewingPdItem(null);
+          onRefresh();
+        }}
       />
     )}
     </div>
