@@ -284,7 +284,7 @@ export const loadWikidataEnrichment = async (
     fetchMovieIdentifiers(item.wikidataId),
     searchCommonsImages(item.originalTitle, item.posterUrl),
     searchArchiveItems(item.originalTitle, item.year, item.archiveId),
-    searchTmdb(item.originalTitle, item.year, item.imdbId, item.tmdbId, item.instanceQid === 'Q5398426'),
+    searchTmdb(item.originalTitle, item.year, item.imdbId, item.tmdbId, item.tmdbType === 'tv' || item.instanceQid === 'Q5398426'),
   ]);
 
   if (ids.status === 'fulfilled') {
