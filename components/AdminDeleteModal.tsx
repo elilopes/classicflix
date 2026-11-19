@@ -1201,11 +1201,7 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                                           className="btn btn-sm btn-outline-success py-0 px-2 d-inline-flex align-items-center gap-1"
                                           onClick={() => handleImportSeries(item)}
                                         >
-                                          {importingQid === item.wikidataId ? (
-                                            <Loader2 size={12} className="animate-spin" />
-                                          ) : (
-                                            <PlusCircle size={12} />
-                                          )}
+                                          <PlusCircle size={12} />
                                           <span>Importar</span>
                                         </button>
                                       )}
