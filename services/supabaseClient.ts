@@ -258,7 +258,7 @@ export const addSupabaseMovie = async (
         trailerurl: movie.trailerUrl || null,
         subtitleurl: movie.subtitleUrl || null,
         description: englishDescription,
-        type: movie.type || 'film',
+        type: movie.type || null,
         awards: formatAwardsForDb(movie.awards),
         popularity: movie.popularity ?? null,
     };
