@@ -50,7 +50,7 @@ BEGIN
   IF EXISTS (
     SELECT 1 FROM unnest(COALESCE(p_selected_fields, ARRAY[]::text[])) f
     WHERE f NOT IN ('title','titlePt','originalTitle','year','language','posterUrl','videoUrl','trailerUrl',
-                    'descriptionEn','descriptionPt','director','duration','genres','themes','license','identifiers')
+                    'descriptionEn','descriptionPt','director','duration','genres','themes','cast','rating','license','identifiers')
   ) THEN
     RAISE EXCEPTION 'A seleção contém campos não permitidos.' USING ERRCODE = '22023';
   END IF;
