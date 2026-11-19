@@ -373,11 +373,11 @@ export const persistWikidataProduction = async (input: PersistWikidataProduction
         genres: toCsvText(draft.genres),
         director: draft.director || null,
         sourcelabel: draft.license || null,
-        castmembers: null,
+        castmembers: toCsvText(draft.cast),
         cinematographers: null,
         composers: null,
         themes: toCsvText(draft.themes),
-        rating: null,
+        rating: draft.rating || null,
     };
     const identifiers = {
         archiveid: draft.identifiers?.archiveId || null,
