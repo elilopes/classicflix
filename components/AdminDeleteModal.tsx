@@ -21,6 +21,7 @@ import {
   LogOut,
   Languages,
   History,
+  RefreshCw,
 } from 'lucide-react';
 import { Movie, AppLanguage } from '../types';
 import { APP_TRANSLATIONS } from '../constants';
