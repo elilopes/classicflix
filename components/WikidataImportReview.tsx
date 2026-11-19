@@ -57,7 +57,7 @@ const initialDraft = (item: WikidataPublicDomainProduction) => ({
   originalTitle: item.originalTitle || '',
   year: item.year || null,
   language: item.language === 'Não informado' ? '' : item.language,
-  descriptionEn: item.descriptionEn || item.description || '',
+  descriptionEn: item.descriptionEn || '',
   descriptionPt: item.descriptionPt || '',
   director: item.director || '',
   duration: item.duration || '',
