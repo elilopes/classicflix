@@ -333,7 +333,7 @@ export const WikidataImportReview: React.FC<Props> = ({ item, existingMovie, onC
         </div>
         <div className="d-flex justify-content-between gap-2 p-3 border-top border-secondary">
           <button className="btn btn-outline-secondary" onClick={onClose} disabled={saving}>Cancelar</button>
-          <button className="btn btn-success" onClick={handleSave} disabled={saving || loadingSources}>
+          <button className="btn btn-success" onClick={handleSave} disabled={saving}>
             {saving ? <><Loader2 size={15} className="animate-spin"/> Salvando…</> : <><Check size={15}/> {isUpdate ? 'Confirmar atualização selecionada' : 'Importar produção'}</>}
           </button>
         </div>
