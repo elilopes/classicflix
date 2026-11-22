@@ -254,7 +254,7 @@ async function startServer() {
     try {
       const searchParams = new URLSearchParams({
         part: "snippet", type: "video", q: query, maxResults: "10",
-        videoEmbeddable: "true", videoSyndicated: "true", key: apiKey
+        videoEmbeddable: "true", videoSyndicated: "true", videoLicense: "creativeCommon", key: apiKey
       });
       const searchResponse = await fetch(`https://www.googleapis.com/youtube/v3/search?${searchParams.toString()}`);
       const searchData: any = await searchResponse.json();
@@ -274,7 +274,7 @@ async function startServer() {
       const items = (searchData.items || []).flatMap((item: any) => {
         const videoId = item.id?.videoId;
         const detail: any = details.get(videoId);
-        if (!videoId || !detail?.status?.embeddable || detail.status.privacyStatus !== "public") return [];
+        if (!videoId || !detail?.status?.embeddable || detail.status.privacyStatus !== "public" || detail.status.license !== "creativeCommon") return [];
         return [{
           videoId,
           title: item.snippet?.title || "",
