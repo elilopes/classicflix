@@ -233,7 +233,7 @@ const searchYouTubeByTitle = async (movie: Movie): Promise<string | null> => {
 
 export const findAndSaveMovieVideoSource = async (movie: Movie): Promise<SearchVideoResult> => {
     try {
-        let archiveId=movie.identifiers?.archiveId || movie.videoUrl?.match(/archive\\.org\\/(?:details|download)\\/([^/?#]+)/i)?.[1], imdbId=movie.identifiers?.imdbId;
+        let archiveId=movie.identifiers?.archiveId || movie.videoUrl?.match(/archive\.org\/(?:details|download)\/([^/?#]+)/i)?.[1], imdbId=movie.identifiers?.imdbId;
         let tmdbCompanyId=movie.identifiers?.tmdbCompanyId, tmdbId=movie.identifiers?.tmdbId;
         let commonsVideo=movie.identifiers?.wikimediaCommons;
         let youtubeId=extractYouTubeId(movie.identifiers?.youtubeId);
