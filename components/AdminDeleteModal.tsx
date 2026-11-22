@@ -28,6 +28,7 @@ import { APP_TRANSLATIONS } from '../constants';
 import { deleteSupabaseMovies, getWikidataImportHistory } from '../services/supabaseClient';
 import { WikidataImportReview } from './WikidataImportReview';
 import { translateWikidataMetadata } from '../services/translateService';
+import { auth } from '../firebase';
 import {
   connectGoogleDrive,
   getGoogleDriveAccessToken,
@@ -59,7 +60,7 @@ interface AdminDeleteModalProps {
   language?: AppLanguage;
 }
 
-type AdminTab = 'delete' | 'tv_copyright' | 'pd_search';
+type AdminTab = 'delete' | 'tv_copyright' | 'pd_search' | 'wikidata_descriptions';
 type CatalogCheckScope = 'series_only' | 'all_qids';
 type CatalogCheckFilter = 'all' | 'pd_series' | 'non_pd_series' | 'with_video';
 
@@ -99,6 +100,73 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
   const [showSparqlScript, setShowSparqlScript] = useState(false);
   const [copiedSparql, setCopiedSparql] = useState(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'danger' | 'info'; text: string } | null>(null);
+
+  // --- Tab 4: Recuperação segura de descrições em inglês do Wikidata ---
+  const [wikidataDescriptionJob, setWikidataDescriptionJob] = useState<any>(null);
+  const [wikidataDescriptionCounts, setWikidataDescriptionCounts] = useState<any>({
+    pending: 0, processing: 0, completed: 0, no_description: 0, failed: 0, total: 0,
+  });
+  const [isWikidataDescriptionAction, setIsWikidataDescriptionAction] = useState(false);
+  const [wikidataDescriptionError, setWikidataDescriptionError] = useState('');
+
+  const fetchWikidataDescriptionStatus = async () => {
+    const user = auth.currentUser;
+    if (!user) throw new Error('Faça login com a conta Google autorizada para consultar o processamento.');
+    const token = await user.getIdToken();
+    const response = await fetch('/api/admin/wikidata-descriptions/status', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Falha ao consultar o processamento.');
+    setWikidataDescriptionJob(data.job || null);
+    setWikidataDescriptionCounts(data.counts || {
+      pending: 0, processing: 0, completed: 0, no_description: 0, failed: 0, total: 0,
+    });
+    setWikidataDescriptionError('');
+  };
+
+  const handleWikidataDescriptionAction = async (action: 'start' | 'pause' | 'resume') => {
+    const user = auth.currentUser;
+    if (!user) {
+      setWikidataDescriptionError('A sessão Google não está ativa. Entre novamente no ClassicFlix.');
+      return;
+    }
+    setIsWikidataDescriptionAction(true);
+    setWikidataDescriptionError('');
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch(`/api/admin/wikidata-descriptions/${action}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.error || 'Não foi possível executar a ação.');
+      await fetchWikidataDescriptionStatus();
+      setStatusMessage({ type: 'success', text: data.message || 'Ação executada.' });
+    } catch (error: any) {
+      setWikidataDescriptionError(error?.message || String(error));
+    } finally {
+      setIsWikidataDescriptionAction(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab !== 'wikidata_descriptions') return;
+    let active = true;
+    const refresh = async () => {
+      try {
+        await fetchWikidataDescriptionStatus();
+      } catch (error: any) {
+        if (active) setWikidataDescriptionError(error?.message || String(error));
+      }
+    };
+    void refresh();
+    const timer = window.setInterval(() => { void refresh(); }, 8000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [activeTab]);
 
   // --- Tab 3: Pesquisa Domínio Público (Série TV / Curta Animação / Filme Documentário) ---
   const [pdSearchCategory, setPdSearchCategory] = useState<PublicDomainProductionCategory>('all');
@@ -695,6 +763,20 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                 >
                   <Search size={16} />
                   <span>{t.adminTabPdSearch || 'Pesquisar Domínio Público (Wikidata)'}</span>
+                </button>
+              </li>
+              <li className="nav-item">
+                <button
+                  type="button"
+                  className={`nav-link border-0 rounded-top d-flex align-items-center gap-2 ${
+                    activeTab === 'wikidata_descriptions'
+                      ? 'bg-primary text-white fw-bold'
+                      : 'bg-dark text-white-50'
+                  }`}
+                  onClick={() => setActiveTab('wikidata_descriptions')}
+                >
+                  <Languages size={16} />
+                  <span>Descrições Wikidata</span>
                 </button>
               </li>
             </ul>
@@ -1671,6 +1753,105 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                 )}
               </div>
             )}
+
+            {activeTab === 'wikidata_descriptions' && (
+              <div className="d-flex flex-column gap-3">
+                <div className="card bg-black border-secondary p-3">
+                  <h6 className="text-primary fw-bold d-flex align-items-center gap-2 mb-2">
+                    <Languages size={18} /> Recuperar descrições em inglês
+                  </h6>
+                  <p className="small text-secondary mb-2">
+                    Busca somente <code>descriptions.en.value</code> das entidades Wikidata vinculadas ao catálogo.
+                    Não utiliza labels como descrição, não traduz títulos e não cria textos artificiais.
+                  </p>
+                  <p className="small text-secondary mb-0">
+                    Descrições em inglês já preenchidas e todos os demais campos existentes são preservados.
+                    Entidades sem descrição em inglês permanecem vazias e são contabilizadas separadamente.
+                  </p>
+                </div>
+
+                {wikidataDescriptionError && (
+                  <div className="alert alert-danger py-2 small mb-0">{wikidataDescriptionError}</div>
+                )}
+
+                <div className="card bg-black border-secondary p-3">
+                  <div className="d-flex justify-content-between align-items-center gap-2 mb-2">
+                    <span className="text-white fw-semibold">Estado do processamento</span>
+                    <span className={`badge ${
+                      wikidataDescriptionJob?.status === 'running' ? 'bg-success' :
+                      wikidataDescriptionJob?.status === 'paused' ? 'bg-warning text-dark' :
+                      wikidataDescriptionJob?.status === 'error' ? 'bg-danger' : 'bg-secondary'
+                    }`}>
+                      {wikidataDescriptionJob?.status || 'não iniciado'}
+                    </span>
+                  </div>
+                  {(() => {
+                    const counts = wikidataDescriptionCounts;
+                    const processed = counts.completed + counts.no_description + counts.failed;
+                    const percent = counts.total > 0 ? Math.min(100, Math.round((processed / counts.total) * 100)) : 0;
+                    return (
+                      <>
+                        <div className="progress bg-secondary mb-3" style={{ height: '12px' }}>
+                          <div
+                            className="progress-bar bg-success"
+                            role="progressbar"
+                            style={{ width: `${percent}%` }}
+                            aria-valuenow={percent}
+                            aria-valuemin={0}
+                            aria-valuemax={100}
+                          />
+                        </div>
+                        <div className="d-flex justify-content-between small text-secondary mb-3">
+                          <span>{processed.toLocaleString('pt-BR')} de {counts.total.toLocaleString('pt-BR')} processadas</span>
+                          <strong className="text-white">{percent}%</strong>
+                        </div>
+                        <div className="row g-2 text-center">
+                          <div className="col-6 col-md"><div className="border border-secondary rounded p-2"><div className="text-white fw-bold">{counts.pending}</div><div className="small text-secondary">Pendentes</div></div></div>
+                          <div className="col-6 col-md"><div className="border border-secondary rounded p-2"><div className="text-info fw-bold">{counts.processing}</div><div className="small text-secondary">Em lote</div></div></div>
+                          <div className="col-6 col-md"><div className="border border-secondary rounded p-2"><div className="text-success fw-bold">{counts.completed}</div><div className="small text-secondary">Com descrição</div></div></div>
+                          <div className="col-6 col-md"><div className="border border-secondary rounded p-2"><div className="text-warning fw-bold">{counts.no_description}</div><div className="small text-secondary">Sem descrição EN</div></div></div>
+                          <div className="col-6 col-md"><div className="border border-secondary rounded p-2"><div className="text-danger fw-bold">{counts.failed}</div><div className="small text-secondary">Falhas</div></div></div>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
+
+                <div className="d-flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="btn btn-primary d-flex align-items-center gap-2"
+                    onClick={() => handleWikidataDescriptionAction(
+                      wikidataDescriptionJob?.status === 'paused' ? 'resume' : 'start'
+                    )}
+                    disabled={isWikidataDescriptionAction || wikidataDescriptionJob?.status === 'running'}
+                  >
+                    {isWikidataDescriptionAction ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+                    {wikidataDescriptionJob?.status === 'paused' ? 'Retomar recuperação' : 'Iniciar recuperação'}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-outline-warning d-flex align-items-center gap-2"
+                    onClick={() => handleWikidataDescriptionAction('pause')}
+                    disabled={isWikidataDescriptionAction || wikidataDescriptionJob?.status !== 'running'}
+                  >
+                    <Loader2 size={16} /> Pausar
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-outline-secondary d-flex align-items-center gap-2"
+                    onClick={() => void fetchWikidataDescriptionStatus().catch((error: any) => setWikidataDescriptionError(error?.message || String(error)))}
+                    disabled={isWikidataDescriptionAction}
+                  >
+                    <RefreshCw size={16} /> Atualizar status
+                  </button>
+                </div>
+                <p className="small text-secondary mb-0">
+                  O trabalho é salvo no Supabase e pode ser retomado após uma interrupção. O processamento ocorre no servidor
+                  enquanto o runtime do ClassicFlix estiver ativo; se o runtime parar, abra o painel e retome a tarefa.
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="modal-footer border-danger d-flex justify-content-between align-items-center bg-black">
@@ -1710,7 +1891,9 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                 <span className="text-secondary small">
                   {activeTab === 'pd_search'
                     ? 'Wikidata SPARQL • 14 Instâncias P31 • P6216=Q19652 • P1476 • P136 • P921 • P57 • P2047'
-                    : 'Wikidata SPARQL • P31=Q5398426 • P6216=Q19652 • P1476'}
+                    : activeTab === 'wikidata_descriptions'
+                      ? 'Wikidata API • descriptions.en.value • preservação de dados existentes'
+                      : 'Wikidata SPARQL • P31=Q5398426 • P6216=Q19652 • P1476'}
                 </span>
                 <button
                   className="btn btn-outline-secondary"
