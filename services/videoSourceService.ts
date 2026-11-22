@@ -303,13 +303,14 @@ const persistVideoSource = async (data: {
                 });
 
                 // Update identifiers table
-                await supabase.from('identifiers').upsert({
+                const identifierPatch: Record<string, any> = {
                     wikidataid: movie.wikidataId,
-                    archiveid: archiveId || null,
-                    commons: commons || null,
-                    youtube: youtube || null,
                     updatedat: new Date().toISOString()
-                }, { onConflict: 'wikidataid' });
+                };
+                if (archiveId) identifierPatch.archiveid = archiveId;
+                if (commons) identifierPatch.commons = commons;
+                if (youtube) identifierPatch.youtube = youtube;
+                await supabase.from('identifiers').upsert(identifierPatch, { onConflict: 'wikidataid' });
             } else if (movie.id) {
                 await supabase.from('movies').update({
                     videourl: directUrl
