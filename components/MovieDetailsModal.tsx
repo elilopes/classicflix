@@ -821,7 +821,7 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
       return;
     }
 
-    // 2. Search Archive.org and Wikimedia Commons APIs for direct playable link
+    // 2. Search YouTube, Archive.org and Wikimedia Commons for a validated playable video
     setIsSearchingVideo(true);
     setVideoSearchMessage(language === 'pt' ? 'Pesquisando filme no YouTube, Archive.org e Wikimedia Commons...' : 'Searching video on YouTube, Archive.org & Wikimedia Commons...');
     try {
