@@ -105,7 +105,6 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("all");
   const pauseRef = useRef(false);
-  const cancelRef = useRef(false);
 
   const candidates = useMemo(() => {
     const seen = new Set<string>();
@@ -137,18 +136,15 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
     setResults([]);
     setProgress({ checked: 0, total: candidates.length });
     pauseRef.current = false;
-    cancelRef.current = false;
     const collected: AuditResult[] = [];
-    const token = await user.getIdToken();
-
     try {
+      const token = await user.getIdToken();
       for (let offset = 0; offset < candidates.length; offset += 50) {
-        while (pauseRef.current && !cancelRef.current) {
+        while (pauseRef.current) {
           await new Promise((resolve) => window.setTimeout(resolve, 300));
         }
-        if (cancelRef.current) break;
-
         const batch = candidates.slice(offset, offset + 50);
+        let transientRetries = 0;
         const response = await fetch("/api/admin/wikidata-catalog-audit/batch", {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -157,7 +153,10 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
         const payload = await response.json().catch(() => ({}));
         if (!response.ok) {
           if (response.status === 429 || payload.transient) {
-            const retrySeconds = Math.max(5, Number(payload.retryAfter) || 8);
+            transientRetries += 1;
+            if (transientRetries > 8) throw new Error("O Wikidata continuou limitando este lote após várias tentativas. Execute novamente para continuar a auditoria.");
+            const exponential = Math.min(60, 2 ** transientRetries * 2);
+            const retrySeconds = Math.max(exponential, Number(payload.retryAfter) || 0, 5);
             await new Promise((resolve) => window.setTimeout(resolve, retrySeconds * 1000));
             offset -= 50;
             continue;
