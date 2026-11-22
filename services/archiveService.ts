@@ -19,7 +19,7 @@ export const resolveArchiveVideoUrl = async (src: string): Promise<string> => {
     let data: any;
     try {
       const response = await fetch(`https://archive.org/metadata/${encodeURIComponent(identifier)}`, { signal: controller.signal });
-      if (!response.ok) return src;
+      if (!response.ok) return '';
       data = await response.json();
     } finally { clearTimeout(timeout); }
 
