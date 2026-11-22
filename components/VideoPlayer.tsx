@@ -149,7 +149,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         let native = true;
         try {
           const sourcePath = new URL(src, window.location.origin).pathname.toLowerCase();
-          if (/\\.(pdf|djvu|epub|mobi|txt|jpg|jpeg|png|gif|mp3|wav)(?:$)/i.test(sourcePath)) {
+          if (/\.(pdf|djvu|epub|mobi|txt|jpg|jpeg|png|gif|mp3|wav)(?:$)/i.test(sourcePath)) {
             setResolvedSrc(null);
             setError("A fonte selecionada não é um arquivo de vídeo reproduzível.");
             return;
