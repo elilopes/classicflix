@@ -27,6 +27,7 @@ import { Movie, AppLanguage } from '../types';
 import { APP_TRANSLATIONS } from '../constants';
 import { deleteSupabaseMovies, getWikidataImportHistory } from '../services/supabaseClient';
 import { WikidataImportReview } from './WikidataImportReview';
+import { WikidataCatalogAudit } from './WikidataCatalogAudit';
 import { translateWikidataMetadata } from '../services/translateService';
 import { auth } from '../firebase';
 import {
@@ -60,7 +61,7 @@ interface AdminDeleteModalProps {
   language?: AppLanguage;
 }
 
-type AdminTab = 'delete' | 'tv_copyright' | 'pd_search' | 'wikidata_descriptions';
+type AdminTab = 'delete' | 'tv_copyright' | 'pd_search' | 'wikidata_descriptions' | 'wikidata_audit';
 type CatalogCheckScope = 'series_only' | 'all_qids';
 type CatalogCheckFilter = 'all' | 'pd_series' | 'non_pd_series' | 'with_video';
 
@@ -777,6 +778,20 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                 >
                   <Languages size={16} />
                   <span>Descrições Wikidata</span>
+                </button>
+              </li>
+              <li className="nav-item">
+                <button
+                  type="button"
+                  className={`nav-link border-0 rounded-top d-flex align-items-center gap-2 ${
+                    activeTab === 'wikidata_audit'
+                      ? 'bg-info text-dark fw-bold'
+                      : 'bg-dark text-white-50'
+                  }`}
+                  onClick={() => setActiveTab('wikidata_audit')}
+                >
+                  <ShieldCheck size={16} />
+                  <span>Auditoria Wikidata</span>
                 </button>
               </li>
             </ul>
@@ -1852,6 +1867,7 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                 </p>
               </div>
             )}
+            {activeTab === 'wikidata_audit' && <WikidataCatalogAudit movies={movies} />}
           </div>
 
           <div className="modal-footer border-danger d-flex justify-content-between align-items-center bg-black">
@@ -1893,7 +1909,9 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                     ? 'Wikidata SPARQL • 14 Instâncias P31 • P6216=Q19652 • P1476 • P136 • P921 • P57 • P2047'
                     : activeTab === 'wikidata_descriptions'
                       ? 'Wikidata API • descriptions.en.value • preservação de dados existentes'
-                      : 'Wikidata SPARQL • P31=Q5398426 • P6216=Q19652 • P1476'}
+                      : activeTab === 'wikidata_audit'
+                        ? 'Wikidata API • P31 • P6216 • P1476 • labels • auditoria não destrutiva'
+                        : 'Wikidata SPARQL • P31=Q5398426 • P6216=Q19652 • P1476'}
                 </span>
                 <button
                   className="btn btn-outline-secondary"
