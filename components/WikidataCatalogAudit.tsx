@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Download, Loader2, Pause, Play, ShieldCheck } from "lucide-react";
 import { auth } from "../firebase";
 import { Movie } from "../types";
@@ -106,6 +106,9 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("all");
   const pauseRef = useRef(false);
+  const cancelRef = useRef(false);
+
+  useEffect(() => () => { cancelRef.current = true; }, []);
 
   const candidates = useMemo(() => {
     const seen = new Set<string>();
@@ -140,6 +143,7 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
     setResults([]);
     setProgress({ checked: 0, total: candidates.length });
     pauseRef.current = false;
+    cancelRef.current = false;
     const invalidCandidates = candidates.filter((item) => !item.valid);
     const validCandidates = candidates.filter((item) => item.valid);
     const collected: AuditResult[] = invalidCandidates.map((item) => ({
@@ -154,9 +158,10 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
       const token = await user.getIdToken();
       let transientRetries = 0;
       for (let offset = 0; offset < validCandidates.length; offset += 50) {
-        while (pauseRef.current) {
+        while (pauseRef.current && !cancelRef.current) {
           await new Promise((resolve) => window.setTimeout(resolve, 300));
         }
+        if (cancelRef.current) break;
         const batch = validCandidates.slice(offset, offset + 50);
         const response = await fetch("/api/admin/wikidata-catalog-audit/batch", {
           method: "POST",
@@ -177,6 +182,7 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
           throw new Error(payload.error || "Falha ao consultar o Wikidata.");
         }
 
+        if (cancelRef.current) break;
         transientRetries = 0;
         const entities = payload.entities || {};
         for (const item of batch) {
@@ -202,6 +208,7 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
       setIsRunning(false);
       setIsPaused(false);
       pauseRef.current = false;
+      cancelRef.current = false;
     }
   };
 
