@@ -825,7 +825,16 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
     setIsSearchingVideo(true);
     setVideoSearchMessage(language === 'pt' ? 'Pesquisando filme no YouTube, Archive.org e Wikimedia Commons...' : 'Searching video on YouTube, Archive.org & Wikimedia Commons...');
     try {
-      const result = await findAndSaveMovieVideoSource(movie);
+      const movieWithKnownSources: Movie = {
+        ...movie,
+        identifiers: {
+          ...movie.identifiers,
+          archiveId: movie.identifiers?.archiveId || sources?.archiveid || undefined,
+          wikimediaCommons: movie.identifiers?.wikimediaCommons || sources?.commons || undefined,
+          youtubeId: movie.identifiers?.youtubeId || sources?.youtube || undefined,
+        },
+      };
+      const result = await findAndSaveMovieVideoSource(movieWithKnownSources);
       if (result.success && result.directUrl) {
         setVideoSearchMessage(language === 'pt' ? 'Vídeo encontrado! Abrindo reprodução...' : 'Video found! Starting playback...');
         setSources(prev => ({
@@ -862,7 +871,16 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
     setIsSearchingVideo(true);
     setVideoSearchMessage(language === 'pt' ? 'Pesquisando fontes de vídeo no YouTube, Archive.org e Wikimedia Commons...' : 'Searching video on YouTube, Archive.org & Wikimedia Commons...');
     try {
-      const result = await findAndSaveMovieVideoSource(movie);
+      const movieWithKnownSources: Movie = {
+        ...movie,
+        identifiers: {
+          ...movie.identifiers,
+          archiveId: movie.identifiers?.archiveId || sources?.archiveid || undefined,
+          wikimediaCommons: movie.identifiers?.wikimediaCommons || sources?.commons || undefined,
+          youtubeId: movie.identifiers?.youtubeId || sources?.youtube || undefined,
+        },
+      };
+      const result = await findAndSaveMovieVideoSource(movieWithKnownSources);
       if (result.success && result.directUrl) {
         setVideoSearchMessage(language === 'pt' ? 'Vídeo encontrado e salvo!' : 'Video found & saved!');
         setSources(prev => ({
