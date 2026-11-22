@@ -23,6 +23,7 @@ import { setupGameSockets } from "./server/gameSockets.ts";
 import { createGeminiRouter } from "./server/geminiRoutes.ts";
 import { createTranslateRouter } from "./server/translateRoutes.ts";
 import { createWikidataDescriptionRouter } from "./server/wikidataDescriptionRoutes.ts";
+import { createWikidataCatalogAuditRouter } from "./server/wikidataCatalogAuditRoutes.ts";
 
 import { GoogleAuth } from "google-auth-library";
 import { google } from "googleapis";
@@ -247,6 +248,7 @@ async function startServer() {
   app.use("/api/gemini", createGeminiRouter());
   app.use("/api/translate", createTranslateRouter());
   app.use("/api/admin/wikidata-descriptions", createWikidataDescriptionRouter());
+  app.use("/api/admin/wikidata-catalog-audit", createWikidataCatalogAuditRouter());
   // YouTube Data API proxy: keeps the API key on the server and returns embeddable video files only.
   app.get("/api/video/youtube-search", async (req, res) => {
     const apiKey = process.env.YOUTUBE_API_KEY;
