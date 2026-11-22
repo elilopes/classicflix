@@ -92,6 +92,7 @@ const classificationLabel: Record<string, string> = {
   title_mismatch: "Título divergente de P1476",
   missing_title_property: "Sem propriedade P1476",
   qid_not_found: "QID não encontrado",
+  invalid_qid: "QID ausente ou inválido",
   api_error: "Erro na consulta",
 };
 
@@ -108,11 +109,13 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
 
   const candidates = useMemo(() => {
     const seen = new Set<string>();
-    return movies.flatMap((movie: any) => {
+    return movies.flatMap((movie: any, index: number) => {
       const qid = String(movie.wikidataId || movie.wikidataid || "").trim().toUpperCase();
-      if (!/^Q[1-9]\d*$/.test(qid) || seen.has(qid)) return [];
-      seen.add(qid);
-      return [{ qid, title: String(movie.title || "") }];
+      const valid = /^Q[1-9]\d*$/.test(qid);
+      const identity = valid ? qid : `invalid:${movie.id || index}`;
+      if (seen.has(identity)) return [];
+      seen.add(identity);
+      return [{ qid, title: String(movie.title || ""), valid }];
     });
   }, [movies]);
 
@@ -122,13 +125,14 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
     nonPublic: results.filter((item) => ["not_public_domain", "missing_copyright_status"].includes(item.classification)).length,
     titleIssues: results.filter((item) => item.titleMatchesP1476 !== true || item.titleMatchesLabel === false).length,
     missing: results.filter((item) => item.classification === "qid_not_found").length,
+    invalidQid: results.filter((item) => item.classification === "invalid_qid").length,
     errors: results.filter((item) => item.classification === "api_error").length,
   }), [results]);
 
   const runAudit = async () => {
     const user = auth.currentUser;
     if (!user) { setError("Entre com a conta Google autorizada para executar a auditoria."); return; }
-    if (!candidates.length) { setError("Não foram encontrados QIDs válidos no catálogo carregado."); return; }
+    if (!candidates.length) { setError("O catálogo não possui registros para auditar."); return; }
 
     setIsRunning(true);
     setIsPaused(false);
@@ -136,15 +140,24 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
     setResults([]);
     setProgress({ checked: 0, total: candidates.length });
     pauseRef.current = false;
-    const collected: AuditResult[] = [];
+    const invalidCandidates = candidates.filter((item) => !item.valid);
+    const validCandidates = candidates.filter((item) => item.valid);
+    const collected: AuditResult[] = invalidCandidates.map((item) => ({
+      wikidataid: item.qid || "(vazio)", catalogTitle: item.title, entityExists: false,
+      wikidataLabelEn: "", wikidataLabelPt: "", titleP1476: [], p31Qids: [], p6216Qids: [],
+      visualProduction: false, publicDomain: false, titleMatchesP1476: null, titleMatchesLabel: null,
+      classification: "invalid_qid",
+    }));
+    setResults([...collected]);
+    setProgress({ checked: collected.length, total: candidates.length });
     try {
       const token = await user.getIdToken();
       let transientRetries = 0;
-      for (let offset = 0; offset < candidates.length; offset += 50) {
+      for (let offset = 0; offset < validCandidates.length; offset += 50) {
         while (pauseRef.current) {
           await new Promise((resolve) => window.setTimeout(resolve, 300));
         }
-        const batch = candidates.slice(offset, offset + 50);
+        const batch = validCandidates.slice(offset, offset + 50);
         const response = await fetch("/api/admin/wikidata-catalog-audit/batch", {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -259,7 +272,7 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
               <div className="col-6 col-md"><div className="border border-secondary rounded p-2"><strong className="text-danger">{summary.invalidType}</strong><div className="small text-secondary">Instância inválida</div></div></div>
               <div className="col-6 col-md"><div className="border border-secondary rounded p-2"><strong className="text-warning">{summary.nonPublic}</strong><div className="small text-secondary">Direitos não PD</div></div></div>
               <div className="col-6 col-md"><div className="border border-secondary rounded p-2"><strong className="text-info">{summary.titleIssues}</strong><div className="small text-secondary">Problemas de título</div></div></div>
-              <div className="col-6 col-md"><div className="border border-secondary rounded p-2"><strong className="text-danger">{summary.missing}</strong><div className="small text-secondary">QID inexistente</div></div></div>
+              <div className="col-6 col-md"><div className="border border-secondary rounded p-2"><strong className="text-danger">{summary.missing + summary.invalidQid}</strong><div className="small text-secondary">QID inválido/inexistente</div></div></div>
               <div className="col-6 col-md"><div className="border border-secondary rounded p-2"><strong className="text-secondary">{summary.errors}</strong><div className="small text-secondary">Erros</div></div></div>
             </div>
           </div>
