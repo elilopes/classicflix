@@ -260,7 +260,7 @@ export const findAndSaveMovieVideoSource = async (movie: Movie): Promise<SearchV
             await persistVideoSource({ movie,directUrl:url,youtube:url,archiveId,imdbId,tmdbCompanyId,tmdbId });
             return { success:true,directUrl:url,source:'youtube',archiveId:archiveId||undefined,imdbId,tmdbCompanyId,tmdbId,message:'Vídeo vinculado ao item no YouTube.' };
         }
-        return { success:false,directUrl:null,source:null,archiveId:archiveId||undefined,imdbId,tmdbCompanyId,tmdbId,message:'Nenhum vídeo confiável encontrado. Livros, PDFs e arquivos sem formato de vídeo foram descartados.' };
+        return { success:false,directUrl:null,source:null,archiveId:archiveId||undefined,imdbId,tmdbCompanyId,tmdbId,message:'Nenhum vídeo confiável encontrado. Livros e documentos foram descartados; a busca do YouTube por título requer YOUTUBE_API_KEY no servidor e prioriza vídeos com licença Creative Commons.' };
     } catch (err:any) {
         console.error('Error in findAndSaveMovieVideoSource:',err);
         return { success:false,directUrl:null,source:null,message:err?.message||'Erro durante a busca da fonte de vídeo.' };
