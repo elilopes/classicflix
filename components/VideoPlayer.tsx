@@ -139,6 +139,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   useEffect(() => {
+    let cancelled = false;
     const resolveUrl = async () => {
       setIsResolving(true);
       setError(null);
@@ -167,22 +168,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             native = embed.isNative;
         }
 
+        if (cancelled) return;
         setResolvedSrc(finalUrl);
         setIsNative(native);
       } catch (err) {
-        setError("Erro ao processar fonte do vídeo.");
+        if (!cancelled) setError("Erro ao processar fonte do vídeo.");
       } finally {
-        setIsResolving(false);
+        if (!cancelled) setIsResolving(false);
       }
     };
     resolveUrl();
+    return () => { cancelled = true; };
   }, [src]);
 
   const togglePlay = useCallback(() => {
     if (!videoRef.current) return;
     if (videoRef.current.paused) {
-      videoRef.current.play().catch(() => {});
-      setIsPlaying(true);
+      videoRef.current.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
     } else {
       videoRef.current.pause();
       setIsPlaying(false);
@@ -212,6 +214,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         {resolvedSrc && isNative ? (
           <div className="w-100 h-100 position-relative d-flex align-items-center justify-content-center">
             <video 
+                key={resolvedSrc}
                 ref={videoRef} 
                 src={resolvedSrc} 
                 className="w-100 h-100 bg-black" 
@@ -239,6 +242,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                         return;
                       }
                     }
+                    setIsPlaying(false);
                     console.error("Video Error: Failed to load video correctly.");
                     setError("Erro ao carregar o vídeo. Verifique se o formato é suportado pelo seu navegador.");
                 }}
@@ -266,6 +270,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           </div>
         ) : resolvedSrc ? (
           <iframe 
+              key={resolvedSrc}
               src={resolvedSrc} 
               className="w-100 h-100 border-0" 
               allow="autoplay; encrypted-media; fullscreen; picture-in-picture" 
