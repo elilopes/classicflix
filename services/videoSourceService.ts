@@ -207,6 +207,30 @@ export const searchWikimediaCommons = async (options: {
  * saves it to the database (Supabase movies & identifiers table),
  * and connects it to the movie.
  */
+const searchYouTubeByTitle = async (movie: Movie): Promise<string | null> => {
+    const titles = [...new Set([movie.originalTitle, movie.title, movie.titlePt].filter(Boolean) as string[])];
+    for (const title of titles) {
+        try {
+            const query = [title, movie.year || '', 'full movie'].filter(Boolean).join(' ');
+            const data = await fetchJson(`/api/video/youtube-search?q=${encodeURIComponent(query)}`);
+            const items = data.items || [];
+            const ranked = items.map((item: any) => ({
+                item,
+                score: similarity(item.title || '', titles),
+                duration: Number(item.durationSeconds || 0),
+            })).filter((x: any) => x.score >= 0.72 && x.duration >= 480 &&
+                !/trailer|teaser|review|reaction|soundtrack|interview|behind the scenes|clip|shorts/i.test(x.item.title || ''))
+              .sort((a: any, b: any) => b.score - a.score || b.duration - a.duration);
+            const id = ranked[0]?.item?.videoId;
+            if (id && /^[\\w-]{11}$/.test(id)) return id;
+        } catch (error) {
+            // YouTube title search is optional; keep Archive and Commons available if the API key is absent.
+            console.info('YouTube title search unavailable:', error);
+        }
+    }
+    return null;
+};
+
 export const findAndSaveMovieVideoSource = async (movie: Movie): Promise<SearchVideoResult> => {
     try {
         let archiveId=movie.identifiers?.archiveId, imdbId=movie.identifiers?.imdbId;
@@ -219,16 +243,17 @@ export const findAndSaveMovieVideoSource = async (movie: Movie): Promise<SearchV
             tmdbCompanyId ||= ids.tmdbCompanyId || undefined; tmdbId ||= ids.tmdbId || undefined;
             commonsVideo ||= ids.commonsVideo || undefined; youtubeId ||= ids.youtubeId || undefined;
         }
-        const archive=await searchArchiveOrg({ title:movie.title, originalTitle:movie.originalTitle, year:movie.year, archiveId, imdbId });
+        const archive=await searchArchiveOrg({ title:movie.title, originalTitle:movie.originalTitle || movie.titlePt, year:movie.year, archiveId, imdbId });
         if (archive.directUrl) {
             await persistVideoSource({ movie,directUrl:archive.directUrl,archiveId:archive.archiveId||archiveId,imdbId,tmdbCompanyId,tmdbId,youtube:youtubeId ? `https://www.youtube.com/watch?v=${youtubeId}` : undefined });
             return { success:true,directUrl:archive.directUrl,source:'archive',archiveId:archive.archiveId||undefined,imdbId,tmdbCompanyId,tmdbId,message:`Vídeo validado no Internet Archive: ${archive.fileName}` };
         }
-        const commons=await searchWikimediaCommons({ title:movie.title,originalTitle:movie.originalTitle,commonsUrl:commonsVideo });
+        const commons=await searchWikimediaCommons({ title:movie.title,originalTitle:movie.originalTitle || movie.titlePt,commonsUrl:commonsVideo });
         if (commons.directUrl) {
             await persistVideoSource({ movie,directUrl:commons.directUrl,commons:commons.directUrl,archiveId,imdbId,tmdbCompanyId,tmdbId,youtube:youtubeId ? `https://www.youtube.com/watch?v=${youtubeId}` : undefined });
             return { success:true,directUrl:commons.directUrl,source:'commons',commonsTitle:commons.fileName,archiveId:archiveId||undefined,imdbId,tmdbCompanyId,tmdbId,message:`Vídeo validado no Wikimedia Commons: ${commons.fileName}` };
         }
+        youtubeId ||= await searchYouTubeByTitle(movie) || undefined;
         if (youtubeId) {
             const url=`https://www.youtube.com/watch?v=${youtubeId}`;
             await persistVideoSource({ movie,directUrl:url,youtube:url,archiveId,imdbId,tmdbCompanyId,tmdbId });
