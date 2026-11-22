@@ -805,9 +805,15 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
     }
   };
 
+  const isNonVideoAsset = (url: string) => {
+    try {
+      return /\\.(pdf|djvu|epub|mobi|txt|jpg|jpeg|png|gif|mp3|wav)(?:$)/i.test(new URL(url).pathname);
+    } catch { return false; }
+  };
+
   const handlePlayOrSearch = async () => {
     // 1. If effective video URL already exists, open VideoPlayer directly
-    if (effectiveVideoUrl) {
+    if (effectiveVideoUrl && !isNonVideoAsset(effectiveVideoUrl)) {
       setIsPlayerActive(true);
       return;
     }
@@ -837,8 +843,8 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
         setIsSearchingVideo(false);
         setVideoSearchMessage(null);
         alert(language === 'pt' 
-          ? (result.message || 'Nenhum vídeo direto de domínio público encontrado automaticamente no Archive.org ou Wikimedia Commons. Tente o botão "Onde Assistir".') 
-          : (result.message || 'No direct public domain video stream found in Archive.org or Wikimedia Commons. Try "Where to Watch".'));
+          ? (result.message || 'Nenhum vídeo reproduzível e compatível foi encontrado no YouTube, Archive.org ou Wikimedia Commons. Tente o botão "Onde Assistir".') 
+          : (result.message || 'No compatible playable video was found on YouTube, Archive.org or Wikimedia Commons. Try "Where to Watch".'));
       }
     } catch (err: any) {
       console.error("Error searching video sources:", err);
@@ -870,7 +876,7 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
           : `Video stream found on ${result.source?.toUpperCase()}!\nDirect URL: ${result.directUrl}`);
       } else {
         alert(language === 'pt'
-          ? (result.message || 'Nenhum vídeo direto de domínio público encontrado automaticamente no Archive.org ou Wikimedia Commons.')
+          ? (result.message || 'Nenhum vídeo reproduzível e compatível foi encontrado no YouTube, Archive.org ou Wikimedia Commons.')
           : (result.message || 'No direct public domain stream found.'));
       }
     } catch (err: any) {
