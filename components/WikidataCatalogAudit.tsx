@@ -139,12 +139,12 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
     const collected: AuditResult[] = [];
     try {
       const token = await user.getIdToken();
+      let transientRetries = 0;
       for (let offset = 0; offset < candidates.length; offset += 50) {
         while (pauseRef.current) {
           await new Promise((resolve) => window.setTimeout(resolve, 300));
         }
         const batch = candidates.slice(offset, offset + 50);
-        let transientRetries = 0;
         const response = await fetch("/api/admin/wikidata-catalog-audit/batch", {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
@@ -164,6 +164,7 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
           throw new Error(payload.error || "Falha ao consultar o Wikidata.");
         }
 
+        transientRetries = 0;
         const entities = payload.entities || {};
         for (const item of batch) {
           const entity = entities[item.qid];
