@@ -23,7 +23,7 @@ export const resolveArchiveVideoUrl = async (src: string): Promise<string> => {
       data = await response.json();
     } finally { clearTimeout(timeout); }
 
-    if (data.metadata?.mediatype && data.metadata.mediatype !== 'movies') return src;
+    if (data.metadata?.mediatype !== 'movies') return src;
     const files = (data.files || []).filter((f: any) => {
       const name = String(f.name || '').toLowerCase();
       const format = String(f.format || '').toLowerCase();
