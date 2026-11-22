@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from "react";
-import { AlertTriangle, CheckCircle2, Download, Loader2, Pause, Play, RefreshCw, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Download, Loader2, Pause, Play, ShieldCheck } from "lucide-react";
 import { auth } from "../firebase";
 import { Movie } from "../types";
 
@@ -121,7 +121,7 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
     valid: results.filter((item) => item.classification === "valid_visual_public_domain").length,
     invalidType: results.filter((item) => ["not_visual_production", "missing_instance"].includes(item.classification)).length,
     nonPublic: results.filter((item) => ["not_public_domain", "missing_copyright_status"].includes(item.classification)).length,
-    titleIssues: results.filter((item) => ["title_mismatch", "missing_title_property"].includes(item.classification)).length,
+    titleIssues: results.filter((item) => item.titleMatchesP1476 !== true || item.titleMatchesLabel === false).length,
     missing: results.filter((item) => item.classification === "qid_not_found").length,
     errors: results.filter((item) => item.classification === "api_error").length,
   }), [results]);
@@ -166,7 +166,6 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
         }
 
         const entities = payload.entities || {};
-        const byQid = new Map(batch.map((item) => [item.qid, item]));
         for (const item of batch) {
           const entity = entities[item.qid];
           try {
@@ -284,7 +283,7 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
                     {visibleResults.map((item) => (
                       <tr key={item.wikidataid}>
                         <td className="small"><a className="text-info" href={`https://www.wikidata.org/wiki/${item.wikidataid}`} target="_blank" rel="noreferrer">{item.wikidataid}</a><div>{item.catalogTitle || "—"}</div></td>
-                        <td className="small">{item.wikidataLabelEn || item.wikidataLabelPt || "—"}</td>
+                        <td className="small">{item.wikidataLabelEn || item.wikidataLabelPt || "—"}<div className="text-secondary">{item.titleMatchesLabel === null ? "Label ausente" : item.titleMatchesLabel ? "Label confere" : "Label diverge"}</div></td>
                         <td className="small">{item.titleP1476.join(" / ") || "—"}<div className="text-secondary">{item.titleMatchesP1476 === null ? "P1476 ausente" : item.titleMatchesP1476 ? "Título confere" : "Título diverge"}</div></td>
                         <td className="small">{item.p31Qids.join(", ") || "—"}<div className="text-secondary">{item.visualProduction ? "Audiovisual" : "Não reconhecida"}</div></td>
                         <td className="small">{item.p6216Qids.join(", ") || "—"}<div className="text-secondary">{item.publicDomain ? "Domínio público" : "Não confirmado"}</div></td>
