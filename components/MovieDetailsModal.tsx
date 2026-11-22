@@ -779,9 +779,10 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
     }
   };
 
-  const effectiveVideoUrl = fixUrl(movie.videoUrl || 
-                           sources?.commons || 
-                           sources?.youtube || 
+  const effectiveVideoUrl = fixUrl(sources?.directUrl ||
+                           movie.videoUrl ||
+                           sources?.commons ||
+                           sources?.youtube ||
                            (sources?.archiveid ? `https://archive.org/details/${sources.archiveid}` : ''));
 
   const refreshSources = async () => {
@@ -807,7 +808,9 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
 
   const isNonVideoAsset = (url: string) => {
     try {
-      return /\.(pdf|djvu|epub|mobi|txt|jpg|jpeg|png|gif|mp3|wav)(?:$)/i.test(new URL(url).pathname);
+      const parsed = new URL(url);
+      return /\.(pdf|djvu|epub|mobi|txt|jpg|jpeg|png|gif|mp3|wav)(?:$)/i.test(parsed.pathname) ||
+        /archive\.org$/i.test(parsed.hostname) && /\/details\//i.test(parsed.pathname);
     } catch { return false; }
   };
 
@@ -826,6 +829,7 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
       if (result.success && result.directUrl) {
         setVideoSearchMessage(language === 'pt' ? 'Vídeo encontrado! Abrindo reprodução...' : 'Video found! Starting playback...');
         setSources(prev => ({
+          directUrl: result.directUrl || prev?.directUrl || null,
           commons: result.source === 'commons' ? result.directUrl : (prev?.commons || null),
           youtube: result.source === 'youtube' ? result.directUrl : (prev?.youtube || null),
           archiveid: result.archiveId || prev?.archiveid || null,
