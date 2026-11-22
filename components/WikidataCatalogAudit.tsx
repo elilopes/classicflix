@@ -126,7 +126,7 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
     valid: results.filter((item) => item.classification === "valid_visual_public_domain").length,
     invalidType: results.filter((item) => ["not_visual_production", "missing_instance"].includes(item.classification)).length,
     nonPublic: results.filter((item) => ["not_public_domain", "missing_copyright_status"].includes(item.classification)).length,
-    titleIssues: results.filter((item) => item.titleMatchesP1476 !== true || item.titleMatchesLabel === false).length,
+    titleIssues: results.filter((item) => item.entityExists && (item.titleMatchesP1476 !== true || item.titleMatchesLabel === false)).length,
     missing: results.filter((item) => item.classification === "qid_not_found").length,
     invalidQid: results.filter((item) => item.classification === "invalid_qid").length,
     errors: results.filter((item) => item.classification === "api_error").length,
