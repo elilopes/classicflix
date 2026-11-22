@@ -807,7 +807,7 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
 
   const isNonVideoAsset = (url: string) => {
     try {
-      return /\\.(pdf|djvu|epub|mobi|txt|jpg|jpeg|png|gif|mp3|wav)(?:$)/i.test(new URL(url).pathname);
+      return /\.(pdf|djvu|epub|mobi|txt|jpg|jpeg|png|gif|mp3|wav)(?:$)/i.test(new URL(url).pathname);
     } catch { return false; }
   };
 
