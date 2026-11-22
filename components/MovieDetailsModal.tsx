@@ -866,6 +866,7 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
       if (result.success && result.directUrl) {
         setVideoSearchMessage(language === 'pt' ? 'Vídeo encontrado e salvo!' : 'Video found & saved!');
         setSources(prev => ({
+          directUrl: result.directUrl || prev?.directUrl || null,
           commons: result.source === 'commons' ? result.directUrl : (prev?.commons || null),
           youtube: result.source === 'youtube' ? result.directUrl : (prev?.youtube || null),
           archiveid: result.archiveId || prev?.archiveid || null,
