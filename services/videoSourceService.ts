@@ -33,62 +33,68 @@ export interface SearchVideoResult {
  * - P10: Wikimedia Commons video
  * - P1651: YouTube video ID
  */
-export const fetchMovieIdentifiers = async (qid: string): Promise<{
-    archiveId: string | null;
-    imdbId: string | null;
-    tmdbCompanyId: string | null;
-    tmdbId: string | null;
-    commonsVideo: string | null;
-    youtubeId: string | null;
-}> => {
-    if (!qid || !qid.startsWith('Q')) {
-        return { archiveId: null, imdbId: null, tmdbCompanyId: null, tmdbId: null, commonsVideo: null, youtubeId: null };
-    }
-
-    const endpoint = "https://query.wikidata.org/sparql";
-    const sparqlQuery = `
-        SELECT ?archive ?archiveAlt ?imdb ?tmdbMovie ?tmdbTv ?companyTmdb ?commons ?youtube WHERE {
-            BIND(wd:${qid} AS ?item)
-            OPTIONAL { ?item wdt:P724 ?archive. }
-            OPTIONAL { ?item wdt:P1170 ?archiveAlt. }
-            OPTIONAL { ?item wdt:P345 ?imdb. }
-            OPTIONAL { ?item wdt:P4947 ?tmdbMovie. }
-            OPTIONAL { ?item wdt:P4985 ?tmdbTv. }
-            OPTIONAL { 
-                ?item wdt:P272 ?company. 
-                OPTIONAL { ?company wdt:P3968 ?companyTmdb. }
-            }
-            OPTIONAL { ?item wdt:P10 ?commons. }
-            OPTIONAL { ?item wdt:P1651 ?youtube. }
-        }
-        LIMIT 1
-    `;
-
+const emptyIds = () => ({ archiveId: null, imdbId: null, tmdbCompanyId: null, tmdbId: null, commonsVideo: null, youtubeId: null });
+const extractYouTubeId = (value?: string | null): string | null => {
+    if (!value) return null;
+    const raw = value.trim();
+    if (/^[\\w-]{11}$/.test(raw)) return raw;
     try {
-        const url = new URL(endpoint);
-        url.searchParams.append("query", sparqlQuery);
-        url.searchParams.append("format", "json");
-        url.searchParams.append("origin", "*");
+        const u = new URL(raw);
+        const id = u.hostname.includes('youtu.be') ? u.pathname.split('/').filter(Boolean)[0]
+            : u.searchParams.get('v') || u.pathname.match(/\\/(?:embed|shorts|live|v)\\/([^/?]+)/)?.[1];
+        return id && /^[\\w-]{11}$/.test(id) ? id : null;
+    } catch { return null; }
+};
+const cleanTitle = (s = '') => s.normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const similarity = (candidate: string, titles: string[]) => {
+    const a = cleanTitle(candidate);
+    if (!a) return 0;
+    return Math.max(0, ...titles.map(t => {
+        const b = cleanTitle(t);
+        if (a === b) return 1;
+        if (a.includes(b) || b.includes(a)) return 0.82;
+        const aa = new Set(a.split(' ').filter(x => x.length > 1));
+        const bb = new Set(b.split(' ').filter(x => x.length > 1));
+        return [...aa].filter(x => bb.has(x)).length / Math.max(aa.size, bb.size, 1);
+    }));
+};
+const fetchJson = async (url: string) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 12000);
+    try {
+        const res = await fetch(url, { signal: controller.signal, headers: { Accept: 'application/json' } });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.json();
+    } finally { clearTimeout(timer); }
+};
 
-        const response = await fetch(url.toString());
-        if (!response.ok) return { archiveId: null, imdbId: null, tmdbCompanyId: null, tmdbId: null, commonsVideo: null, youtubeId: null };
-
-        const data = await response.json();
-        const binding = data.results?.bindings?.[0];
-        if (!binding) return { archiveId: null, imdbId: null, tmdbCompanyId: null, tmdbId: null, commonsVideo: null, youtubeId: null };
-
-        return {
-            archiveId: binding.archive?.value || binding.archiveAlt?.value || null,
-            imdbId: binding.imdb?.value || null,
-            tmdbCompanyId: binding.companyTmdb?.value || null,
-            tmdbId: binding.tmdbMovie?.value || binding.tmdbTv?.value || null,
-            commonsVideo: binding.commons?.value || null,
-            youtubeId: binding.youtube?.value || null,
-        };
-    } catch (e) {
-        console.warn("Error fetching Wikidata identifiers:", e);
-        return { archiveId: null, imdbId: null, tmdbCompanyId: null, tmdbId: null, commonsVideo: null, youtubeId: null };
-    }
+export const fetchMovieIdentifiers = async (qid: string): Promise<{
+    archiveId: string | null; imdbId: string | null; tmdbCompanyId: string | null;
+    tmdbId: string | null; commonsVideo: string | null; youtubeId: string | null;
+}> => {
+    if (!/^Q\\d+$/.test(qid || '')) return emptyIds();
+    const query = `
+      SELECT ?archive ?archiveAlt ?imdb ?tmdbMovie ?tmdbTv ?companyTmdb ?commons ?youtube WHERE {
+        BIND(wd:${qid} AS ?item)
+        OPTIONAL { ?item wdt:P724 ?archive. }
+        OPTIONAL { ?item wdt:P1170 ?archiveAlt. }
+        OPTIONAL { ?item wdt:P345 ?imdb. }
+        OPTIONAL { ?item wdt:P4947 ?tmdbMovie. }
+        OPTIONAL { ?item wdt:P4985 ?tmdbTv. }
+        OPTIONAL { ?item wdt:P272/wdt:P3968 ?companyTmdb. }
+        OPTIONAL { ?item wdt:P10 ?commons. }
+        OPTIONAL { ?item wdt:P1651 ?youtube. }
+      } LIMIT 20`;
+    try {
+        const url = new URL('https://query.wikidata.org/sparql');
+        url.searchParams.set('query', query); url.searchParams.set('format', 'json');
+        const json = await fetchJson(url.toString());
+        const rows = json.results?.bindings || [];
+        const first = (k: string) => rows.map((r: any) => r[k]?.value).find(Boolean) || null;
+        return { archiveId: first('archive') || first('archiveAlt'), imdbId: first('imdb'),
+            tmdbCompanyId: first('companyTmdb'), tmdbId: first('tmdbMovie') || first('tmdbTv'),
+            commonsVideo: first('commons'), youtubeId: extractYouTubeId(first('youtube')) };
+    } catch (e) { console.warn('Wikidata identifiers failed:', e); return emptyIds(); }
 };
 
 /**
@@ -96,180 +102,104 @@ export const fetchMovieIdentifiers = async (qid: string): Promise<{
  * using the official Metadata and Advanced Search APIs.
  */
 export const searchArchiveOrg = async (options: {
-    title: string;
-    originalTitle?: string;
-    year?: number;
-    archiveId?: string;
-    imdbId?: string;
-}): Promise<{
-    directUrl: string | null;
-    archiveId: string | null;
-    fileName: string | null;
-    format: string | null;
-}> => {
-    let candidateIdentifiers: string[] = [];
-
-    // 1. If explicit archiveId provided, test that first
-    if (options.archiveId) {
-        candidateIdentifiers.push(options.archiveId.trim());
+    title: string; originalTitle?: string; year?: number; archiveId?: string; imdbId?: string;
+}): Promise<{ directUrl: string | null; archiveId: string | null; fileName: string | null; format: string | null }> => {
+    const titles = [...new Set([options.originalTitle, options.title].filter(Boolean) as string[])];
+    const candidates = new Map<string, any>();
+    if (options.archiveId?.trim()) candidates.set(options.archiveId.trim(), { identifier: options.archiveId.trim(), title: titles[0], score: 1 });
+    const queries: string[] = [];
+    if (options.imdbId) queries.push(`mediatype:movies AND "${options.imdbId.replace(/[^a-zA-Z0-9]/g, '')}"`);
+    for (const t of titles) {
+        const safe = t.replace(/["\\\\]/g, ' ').replace(/\\s+/g, ' ').trim();
+        if (!safe) continue;
+        if (options.year) queries.push(`mediatype:movies AND title:"${safe}" AND year:${options.year}`);
+        queries.push(`mediatype:movies AND title:"${safe}"`);
     }
-
-    // 2. Search Archive.org Advanced Search API
-    try {
-        const queries: string[] = [];
-        
-        if (options.imdbId) {
-            queries.push(`(description:"${options.imdbId}" OR "${options.imdbId}") AND mediatype:(movies)`);
-        }
-        
-        const cleanTitle = options.title.replace(/[:"']/g, ' ').trim();
-        if (options.year) {
-            queries.push(`title:("${cleanTitle}") AND year:${options.year} AND mediatype:(movies)`);
-            queries.push(`"${cleanTitle}" AND year:${options.year} AND mediatype:(movies)`);
-        }
-        queries.push(`title:("${cleanTitle}") AND mediatype:(movies)`);
-
-        for (const q of queries) {
-            const searchUrl = `https://archive.org/advancedsearch.php?q=${encodeURIComponent(q)}&fl[]=identifier,title,downloads,year&sort[]=downloads+desc&rows=5&output=json`;
-            const res = await fetch(searchUrl);
-            if (res.ok) {
-                const json = await res.json();
-                const docs = json.response?.docs || [];
-                for (const doc of docs) {
-                    if (doc.identifier && !candidateIdentifiers.includes(doc.identifier)) {
-                        candidateIdentifiers.push(doc.identifier);
-                    }
-                }
-            }
-            if (candidateIdentifiers.length >= 3) break;
-        }
-    } catch (err) {
-        console.warn("Archive.org search query error:", err);
-    }
-
-    // 3. For each candidate identifier, inspect files via Archive.org Metadata API
-    for (const id of candidateIdentifiers) {
+    for (const q of queries) {
         try {
-            const metaRes = await fetch(`https://archive.org/metadata/${encodeURIComponent(id)}`);
-            if (!metaRes.ok) continue;
-            const metaData = await metaRes.json();
-            const files: any[] = metaData.files || [];
-
-            // Find best playable video file (MP4 h.264 > standard MP4 > WebM > OGV)
-            const videoFiles = files.filter(f => {
-                const name = (f.name || '').toLowerCase();
-                const isTrailer = name.includes('trailer') || name.includes('sample') || name.includes('preview');
-                return !isTrailer && (name.endsWith('.mp4') || name.endsWith('.webm') || name.endsWith('.ogv'));
-            });
-
-            if (videoFiles.length > 0) {
-                // Priority: h.264 mp4 -> any mp4 -> webm -> ogv
-                let bestFile = videoFiles.find(f => f.format === 'h.264' && f.name.endsWith('.mp4'));
-                if (!bestFile) bestFile = videoFiles.find(f => f.name.endsWith('.mp4'));
-                if (!bestFile) bestFile = videoFiles.find(f => f.name.endsWith('.webm'));
-                if (!bestFile) bestFile = videoFiles[0];
-
-                const directUrl = `https://archive.org/download/${id}/${encodeURIComponent(bestFile.name)}`;
-                return {
-                    directUrl,
-                    archiveId: id,
-                    fileName: bestFile.name,
-                    format: bestFile.format || 'mp4'
-                };
+            const u = new URL('https://archive.org/advancedsearch.php');
+            u.searchParams.set('q', q);
+            ['identifier','title','year','downloads','mediatype'].forEach(x => u.searchParams.append('fl[]', x));
+            u.searchParams.set('sort[]','downloads desc'); u.searchParams.set('rows','12'); u.searchParams.set('output','json');
+            const data = await fetchJson(u.toString());
+            for (const d of data.response?.docs || []) {
+                if (!d.identifier || (d.mediatype && d.mediatype !== 'movies')) continue;
+                const score = similarity(d.title || '', titles) + (options.year && Number(d.year) === options.year ? 0.15 : 0);
+                const prev = candidates.get(d.identifier);
+                if (!prev || score > prev.score) candidates.set(d.identifier, { ...d, score });
             }
-        } catch (fileErr) {
-            console.warn(`Error resolving files for Archive.org ${id}:`, fileErr);
-        }
+        } catch (e) { console.warn('Archive title search failed:', e); }
     }
-
-    return { directUrl: null, archiveId: null, fileName: null, format: null };
+    const ranked = [...candidates.values()].filter(x => x.score >= 0.68 || x.identifier === options.archiveId)
+        .sort((a,b) => b.score-a.score || (Number(b.downloads)||0)-(Number(a.downloads)||0)).slice(0,8);
+    for (const item of ranked) {
+        try {
+            const meta = await fetchJson(`https://archive.org/metadata/${encodeURIComponent(item.identifier)}`);
+            if (meta.metadata?.mediatype && meta.metadata.mediatype !== 'movies') continue;
+            if (item.identifier !== options.archiveId && similarity(meta.metadata?.title || item.title || '', titles) < 0.58) continue;
+            const files = (meta.files || []).filter((f:any) => {
+                const n = String(f.name || '').toLowerCase(), fmt = String(f.format || '').toLowerCase();
+                if (!/\\.(mp4|m4v|webm|ogv|ogg)(?:$|[?#])/i.test(n)) return false;
+                if (/sample|trailer|preview|thumb|poster|cover|subtitle|torrent/.test(n)) return false;
+                return fmt.includes('video') || fmt.includes('h.264') || fmt.includes('mpeg') || fmt.includes('webm') || fmt.includes('ogg') || f.source === 'original';
+            }).sort((a:any,b:any) => {
+                const rank=(f:any)=> (/\\.mp4$/i.test(f.name)?50:/\\.webm$/i.test(f.name)?30:10)+(String(f.format).toLowerCase().includes('h.264')?20:0)+(f.source==='original'?5:0);
+                return rank(b)-rank(a);
+            });
+            const file=files[0]; if (!file?.name) continue;
+            return { directUrl:`https://archive.org/download/${encodeURIComponent(item.identifier)}/${encodeURIComponent(file.name)}`,
+                archiveId:item.identifier, fileName:file.name, format:file.format || null };
+        } catch (e) { console.warn('Archive metadata failed:', item.identifier, e); }
+    }
+    return { directUrl:null, archiveId:null, fileName:null, format:null };
 };
 
 /**
  * Searches and extracts a direct playable video link from Wikimedia Commons using the official MediaWiki API
  */
 export const searchWikimediaCommons = async (options: {
-    title: string;
-    originalTitle?: string;
-    commonsUrl?: string | null;
-}): Promise<{
-    directUrl: string | null;
-    fileName: string | null;
-    pageUrl: string | null;
-}> => {
-    // 1. If we have a direct Special:FilePath or File: URL
+    title: string; originalTitle?: string; commonsUrl?: string | null;
+}): Promise<{ directUrl: string | null; fileName: string | null; pageUrl: string | null }> => {
+    const resolveFile = async (name: string) => {
+        const clean = name.replace(/^File:/i,'').replace(/_/g,' ').trim();
+        const u = new URL('https://commons.wikimedia.org/w/api.php');
+        u.searchParams.set('action','query'); u.searchParams.set('titles',`File:${clean}`);
+        u.searchParams.set('prop','imageinfo'); u.searchParams.set('iiprop','url|mime|size');
+        u.searchParams.set('format','json'); u.searchParams.set('origin','*');
+        try {
+            const data=await fetchJson(u.toString());
+            const page:any=Object.values(data.query?.pages || {})[0], info=page?.imageinfo?.[0];
+            const mime=String(info?.mime||'').toLowerCase(), fileUrl=String(info?.url||'');
+            if (!fileUrl || !(mime.startsWith('video/') || /\\.(mp4|m4v|webm|ogv|ogg)(?:$|[?#])/i.test(fileUrl))) return null;
+            return { directUrl:fileUrl.replace(/^http:/,'https:'), fileName:clean,
+                pageUrl:`https://commons.wikimedia.org/wiki/File:${encodeURIComponent(clean.replace(/ /g,'_'))}` };
+        } catch { return null; }
+    };
     if (options.commonsUrl) {
-        let fileName = '';
-        if (options.commonsUrl.includes('Special:FilePath/')) {
-            fileName = decodeURIComponent(options.commonsUrl.split('Special:FilePath/')[1] || '').split('?')[0];
-        } else if (options.commonsUrl.includes('File:')) {
-            fileName = decodeURIComponent(options.commonsUrl.split('File:')[1] || '').split('?')[0];
-        }
-
-        if (fileName) {
-            try {
-                const infoUrl = `https://commons.wikimedia.org/w/api.php?action=query&titles=File:${encodeURIComponent(fileName)}&prop=imageinfo&iiprop=url|mime|size&format=json&origin=*`;
-                const infoRes = await fetch(infoUrl);
-                if (infoRes.ok) {
-                    const data = await infoRes.json();
-                    const pages = data.query?.pages || {};
-                    const firstPage: any = Object.values(pages)[0];
-                    const info = firstPage?.imageinfo?.[0];
-                    if (info?.url) {
-                        return {
-                            directUrl: info.url.replace('http://', 'https://'),
-                            fileName,
-                            pageUrl: `https://commons.wikimedia.org/wiki/File:${encodeURIComponent(fileName)}`
-                        };
-                    }
-                }
-            } catch (err) {
-                console.warn("Error resolving direct Commons URL:", err);
-            }
-        }
+        try {
+            const u=new URL(options.commonsUrl);
+            const m=u.pathname.match(/Special:FilePath\\/(.+)$/i) || u.pathname.match(/\\/wiki\\/File:(.+)$/i);
+            if (m?.[1]) { const exact=await resolveFile(decodeURIComponent(m[1]).split('/')[0]); if (exact) return exact; }
+        } catch { /* invalid URL: title search below */ }
     }
-
-    // 2. Query Wikimedia Commons search API
-    try {
-        const cleanTitle = options.title.replace(/[:"']/g, ' ').trim();
-        const searchTerms = [
-            `${cleanTitle} movie filetype:video`,
-            `${cleanTitle} film filetype:video`,
-            `${cleanTitle} filetype:video`
-        ];
-
-        for (const term of searchTerms) {
-            const apiUrl = `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(term)}&gsrnamespace=6&prop=imageinfo&iiprop=url|mime|size&format=json&origin=*`;
-            const res = await fetch(apiUrl);
-            if (!res.ok) continue;
-
-            const data = await res.json();
-            const pages = data.query?.pages || {};
-            const pageList: any[] = Object.values(pages);
-
-            for (const p of pageList) {
-                const info = p.imageinfo?.[0];
-                if (!info || !info.url) continue;
-
-                const mime = (info.mime || '').toLowerCase();
-                const url = (info.url || '').toLowerCase();
-                const isVideo = mime.startsWith('video/') || url.endsWith('.webm') || url.endsWith('.mp4') || url.endsWith('.ogv');
-
-                if (isVideo) {
-                    const cleanName = (p.title || '').replace(/^File:/i, '');
-                    return {
-                        directUrl: info.url.replace('http://', 'https://'),
-                        fileName: cleanName,
-                        pageUrl: `https://commons.wikimedia.org/wiki/File:${encodeURIComponent(cleanName)}`
-                    };
-                }
+    const titles=[...new Set([options.originalTitle,options.title].filter(Boolean) as string[])];
+    for (const title of titles) for (const term of [`${title} filetype:video`,`${title} film video`]) {
+        try {
+            const u=new URL('https://commons.wikimedia.org/w/api.php');
+            u.searchParams.set('action','query'); u.searchParams.set('generator','search');
+            u.searchParams.set('gsrsearch',term); u.searchParams.set('gsrnamespace','6'); u.searchParams.set('gsrlimit','30');
+            u.searchParams.set('prop','imageinfo'); u.searchParams.set('iiprop','url|mime|size'); u.searchParams.set('format','json'); u.searchParams.set('origin','*');
+            const data=await fetchJson(u.toString());
+            const pages:any[]=Object.values(data.query?.pages||{}).sort((a:any,b:any)=>similarity(b.title.replace(/^File:/i,''),titles)-similarity(a.title.replace(/^File:/i,''),titles));
+            for (const p of pages) {
+                if (similarity(String(p.title||'').replace(/^File:/i,''),titles)<0.58) continue;
+                const info=p.imageinfo?.[0], mime=String(info?.mime||'').toLowerCase(), url=String(info?.url||'');
+                if (!(mime.startsWith('video/') || /\\.(mp4|m4v|webm|ogv|ogg)(?:$|[?#])/i.test(url))) continue;
+                const valid=await resolveFile(p.title); if (valid) return valid;
             }
-        }
-    } catch (searchErr) {
-        console.warn("Wikimedia Commons search API error:", searchErr);
+        } catch (e) { console.warn('Commons search failed:',e); }
     }
-
-    return { directUrl: null, fileName: null, pageUrl: null };
+    return { directUrl:null,fileName:null,pageUrl:null };
 };
 
 /**
@@ -279,137 +209,35 @@ export const searchWikimediaCommons = async (options: {
  */
 export const findAndSaveMovieVideoSource = async (movie: Movie): Promise<SearchVideoResult> => {
     try {
-        let archiveId = movie.identifiers?.archiveId;
-        let imdbId = movie.identifiers?.imdbId;
-        let tmdbCompanyId = movie.identifiers?.tmdbCompanyId;
-        let tmdbId = movie.identifiers?.tmdbId;
-        let commonsVideo = movie.identifiers?.wikimediaCommons;
-        let youtubeUrl: string | null = null;
-
-        // 1. Fetch missing identifiers from Wikidata SPARQL if movie has a wikidataId
-        if (movie.wikidataId && (!archiveId || !imdbId || !tmdbCompanyId || !tmdbId || !commonsVideo)) {
-            const fetched = await fetchMovieIdentifiers(movie.wikidataId);
-            if (fetched.archiveId && !archiveId) archiveId = fetched.archiveId;
-            if (fetched.imdbId && !imdbId) imdbId = fetched.imdbId;
-            if (fetched.tmdbCompanyId && !tmdbCompanyId) tmdbCompanyId = fetched.tmdbCompanyId;
-            if (fetched.tmdbId && !tmdbId) tmdbId = fetched.tmdbId;
-            if (fetched.commonsVideo && !commonsVideo) commonsVideo = fetched.commonsVideo;
-            if (fetched.youtubeId) youtubeUrl = `https://www.youtube.com/watch?v=${fetched.youtubeId}`;
+        let archiveId=movie.identifiers?.archiveId, imdbId=movie.identifiers?.imdbId;
+        let tmdbCompanyId=movie.identifiers?.tmdbCompanyId, tmdbId=movie.identifiers?.tmdbId;
+        let commonsVideo=movie.identifiers?.wikimediaCommons;
+        let youtubeId=extractYouTubeId(movie.identifiers?.youtubeId);
+        if (movie.wikidataId && (!archiveId || !imdbId || !tmdbId || !commonsVideo || !youtubeId)) {
+            const ids=await fetchMovieIdentifiers(movie.wikidataId);
+            archiveId ||= ids.archiveId || undefined; imdbId ||= ids.imdbId || undefined;
+            tmdbCompanyId ||= ids.tmdbCompanyId || undefined; tmdbId ||= ids.tmdbId || undefined;
+            commonsVideo ||= ids.commonsVideo || undefined; youtubeId ||= ids.youtubeId || undefined;
         }
-
-        // 2. Search Archive.org
-        const archiveResult = await searchArchiveOrg({
-            title: movie.title,
-            originalTitle: movie.originalTitle,
-            year: movie.year,
-            archiveId: archiveId || undefined,
-            imdbId: imdbId || undefined
-        });
-
-        if (archiveResult.directUrl) {
-            const directUrl = archiveResult.directUrl;
-            const updatedArchiveId = archiveResult.archiveId || archiveId;
-
-            // Save to database
-            await persistVideoSource({
-                movie,
-                directUrl,
-                archiveId: updatedArchiveId || undefined,
-                imdbId: imdbId || undefined,
-                tmdbCompanyId: tmdbCompanyId || undefined,
-                tmdbId: tmdbId || undefined,
-                youtube: youtubeUrl || undefined
-            });
-
-            return {
-                success: true,
-                directUrl,
-                source: 'archive',
-                archiveId: updatedArchiveId || undefined,
-                imdbId: imdbId || undefined,
-                tmdbCompanyId: tmdbCompanyId || undefined,
-                tmdbId: tmdbId || undefined,
-                message: `Vídeo encontrado no Internet Archive (${updatedArchiveId})!`
-            };
+        const archive=await searchArchiveOrg({ title:movie.title, originalTitle:movie.originalTitle, year:movie.year, archiveId, imdbId });
+        if (archive.directUrl) {
+            await persistVideoSource({ movie,directUrl:archive.directUrl,archiveId:archive.archiveId||archiveId,imdbId,tmdbCompanyId,tmdbId,youtube:youtubeId ? `https://www.youtube.com/watch?v=${youtubeId}` : undefined });
+            return { success:true,directUrl:archive.directUrl,source:'archive',archiveId:archive.archiveId||undefined,imdbId,tmdbCompanyId,tmdbId,message:`Vídeo validado no Internet Archive: ${archive.fileName}` };
         }
-
-        // 3. Search Wikimedia Commons
-        const commonsResult = await searchWikimediaCommons({
-            title: movie.title,
-            originalTitle: movie.originalTitle,
-            commonsUrl: commonsVideo
-        });
-
-        if (commonsResult.directUrl) {
-            const directUrl = commonsResult.directUrl;
-
-            // Save to database
-            await persistVideoSource({
-                movie,
-                directUrl,
-                commons: directUrl,
-                archiveId: archiveId || undefined,
-                imdbId: imdbId || undefined,
-                tmdbCompanyId: tmdbCompanyId || undefined,
-                tmdbId: tmdbId || undefined,
-                youtube: youtubeUrl || undefined
-            });
-
-            return {
-                success: true,
-                directUrl,
-                source: 'commons',
-                commonsTitle: commonsResult.fileName || undefined,
-                archiveId: archiveId || undefined,
-                imdbId: imdbId || undefined,
-                tmdbCompanyId: tmdbCompanyId || undefined,
-                tmdbId: tmdbId || undefined,
-                message: `Vídeo encontrado no Wikimedia Commons (${commonsResult.fileName})!`
-            };
+        const commons=await searchWikimediaCommons({ title:movie.title,originalTitle:movie.originalTitle,commonsUrl:commonsVideo });
+        if (commons.directUrl) {
+            await persistVideoSource({ movie,directUrl:commons.directUrl,commons:commons.directUrl,archiveId,imdbId,tmdbCompanyId,tmdbId,youtube:youtubeId ? `https://www.youtube.com/watch?v=${youtubeId}` : undefined });
+            return { success:true,directUrl:commons.directUrl,source:'commons',commonsTitle:commons.fileName,archiveId:archiveId||undefined,imdbId,tmdbCompanyId,tmdbId,message:`Vídeo validado no Wikimedia Commons: ${commons.fileName}` };
         }
-
-        // 4. If YouTube found from Wikidata as fallback
-        if (youtubeUrl) {
-            await persistVideoSource({
-                movie,
-                directUrl: youtubeUrl,
-                youtube: youtubeUrl,
-                archiveId: archiveId || undefined,
-                imdbId: imdbId || undefined,
-                tmdbCompanyId: tmdbCompanyId || undefined,
-                tmdbId: tmdbId || undefined
-            });
-
-            return {
-                success: true,
-                directUrl: youtubeUrl,
-                source: 'youtube',
-                archiveId: archiveId || undefined,
-                imdbId: imdbId || undefined,
-                tmdbCompanyId: tmdbCompanyId || undefined,
-                tmdbId: tmdbId || undefined,
-                message: "Fonte encontrada no YouTube!"
-            };
+        if (youtubeId) {
+            const url=`https://www.youtube.com/watch?v=${youtubeId}`;
+            await persistVideoSource({ movie,directUrl:url,youtube:url,archiveId,imdbId,tmdbCompanyId,tmdbId });
+            return { success:true,directUrl:url,source:'youtube',archiveId:archiveId||undefined,imdbId,tmdbCompanyId,tmdbId,message:'Vídeo vinculado ao item no YouTube.' };
         }
-
-        return {
-            success: false,
-            directUrl: null,
-            source: null,
-            archiveId: archiveId || undefined,
-            imdbId: imdbId || undefined,
-            tmdbCompanyId: tmdbCompanyId || undefined,
-            tmdbId: tmdbId || undefined,
-            message: "Nenhuma cópia de domínio público encontrada no Archive.org ou Wikimedia Commons."
-        };
-    } catch (err: any) {
-        console.error("Error in findAndSaveMovieVideoSource:", err);
-        return {
-            success: false,
-            directUrl: null,
-            source: null,
-            message: err.message || "Erro durante a busca da fonte de vídeo."
-        };
+        return { success:false,directUrl:null,source:null,archiveId:archiveId||undefined,imdbId,tmdbCompanyId,tmdbId,message:'Nenhum vídeo confiável encontrado. Livros, PDFs e arquivos sem formato de vídeo foram descartados.' };
+    } catch (err:any) {
+        console.error('Error in findAndSaveMovieVideoSource:',err);
+        return { success:false,directUrl:null,source:null,message:err?.message||'Erro durante a busca da fonte de vídeo.' };
     }
 };
 
