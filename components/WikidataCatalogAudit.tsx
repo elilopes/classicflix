@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Download, Loader2, Pause, Play, ShieldCheck } from "lucide-react";
 import { auth } from "../firebase";
-import { Movie } from "../types";
+import type { Movie } from "../types";
 
 type AuditResult = {
   wikidataid: string;
@@ -105,6 +105,8 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
   const [progress, setProgress] = useState({ checked: 0, total: 0 });
   const [error, setError] = useState("");
   const [filter, setFilter] = useState("all");
+  const [page, setPage] = useState(0);
+  const PAGE_SIZE = 100;
   const pauseRef = useRef(false);
   const cancelRef = useRef(false);
 
@@ -141,6 +143,7 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
     setIsPaused(false);
     setError("");
     setResults([]);
+    setPage(0);
     setProgress({ checked: 0, total: candidates.length });
     pauseRef.current = false;
     cancelRef.current = false;
@@ -228,7 +231,10 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
     URL.revokeObjectURL(url);
   };
 
-  const visibleResults = filter === "all" ? results : results.filter((item) => item.classification === filter);
+  const filteredResults = filter === "all" ? results : results.filter((item) => item.classification === filter);
+  const pageCount = Math.max(1, Math.ceil(filteredResults.length / PAGE_SIZE));
+  const safePage = Math.min(page, pageCount - 1);
+  const visibleResults = filteredResults.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
 
   return (
     <div className="d-flex flex-column gap-3">
@@ -241,7 +247,7 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
           P1476 (título) e labels. A auditoria não modifica nem exclui registros.
         </p>
         <div className="small text-secondary mb-3">
-          {candidates.length.toLocaleString("pt-BR")} QIDs válidos disponíveis no catálogo carregado. Consulta em lotes de 50 entidades.
+          {candidates.length.toLocaleString("pt-BR")} registros encontrados no catálogo carregado. Consulta em lotes de 50 entidades.
         </div>
         <div className="d-flex flex-wrap gap-2">
           <button className="btn btn-info fw-bold d-flex align-items-center gap-2" onClick={runAudit} disabled={isRunning}>
@@ -287,9 +293,9 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
           {results.length > 0 && (
             <div className="card bg-black border-secondary p-3">
               <div className="d-flex flex-wrap justify-content-between gap-2 mb-2">
-                <strong className="text-white">Resultados individuais ({visibleResults.length})</strong>
+                <strong className="text-white">Resultados individuais ({filteredResults.length.toLocaleString("pt-BR")})</strong>
                 <select className="form-select form-select-sm bg-dark border-secondary text-white" style={{ maxWidth: 290 }}
-                  value={filter} onChange={(event) => setFilter(event.target.value)}>
+                  value={filter} onChange={(event) => { setFilter(event.target.value); setPage(0); }}>
                   <option value="all">Todas as situações</option>
                   {Object.entries(classificationLabel).map(([key, label]) => <option key={key} value={key}>{label}</option>)}
                 </select>
@@ -313,6 +319,15 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
                   </tbody>
                 </table>
               </div>
+              {filteredResults.length > PAGE_SIZE && (
+                <div className="d-flex justify-content-between align-items-center gap-2 mt-3">
+                  <span className="small text-secondary">Página {safePage + 1} de {pageCount} · exibindo até {PAGE_SIZE} registros por vez</span>
+                  <div className="d-flex gap-2">
+                    <button className="btn btn-sm btn-outline-secondary" disabled={safePage === 0} onClick={() => setPage((value) => Math.max(0, value - 1))}>Anterior</button>
+                    <button className="btn btn-sm btn-outline-info" disabled={safePage >= pageCount - 1} onClick={() => setPage((value) => Math.min(pageCount - 1, value + 1))}>Próxima</button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </>
