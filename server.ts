@@ -245,6 +245,53 @@ async function startServer() {
 
   app.use("/api/gemini", createGeminiRouter());
   app.use("/api/translate", createTranslateRouter());
+  // YouTube Data API proxy: keeps the API key on the server and returns embeddable video files only.
+  app.get("/api/video/youtube-search", async (req, res) => {
+    const apiKey = process.env.YOUTUBE_API_KEY;
+    const query = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 180) : "";
+    if (!apiKey) return res.status(503).json({ error: "YOUTUBE_API_KEY não configurada no servidor." });
+    if (query.length < 3) return res.status(400).json({ error: "Informe um título válido para pesquisar." });
+    try {
+      const searchParams = new URLSearchParams({
+        part: "snippet", type: "video", q: query, maxResults: "10",
+        videoEmbeddable: "true", videoSyndicated: "true", key: apiKey
+      });
+      const searchResponse = await fetch(`https://www.googleapis.com/youtube/v3/search?${searchParams.toString()}`);
+      const searchData: any = await searchResponse.json();
+      if (!searchResponse.ok) throw new Error(searchData?.error?.message || "Falha na pesquisa do YouTube.");
+      const ids = (searchData.items || []).map((item: any) => item.id?.videoId).filter(Boolean);
+      if (!ids.length) return res.json({ items: [] });
+
+      const detailParams = new URLSearchParams({ part: "contentDetails,status", id: ids.join(","), key: apiKey });
+      const detailResponse = await fetch(`https://www.googleapis.com/youtube/v3/videos?${detailParams.toString()}`);
+      const detailData: any = await detailResponse.json();
+      if (!detailResponse.ok) throw new Error(detailData?.error?.message || "Falha ao validar vídeos do YouTube.");
+      const details = new Map((detailData.items || []).map((item: any) => [item.id, item]));
+      const parseDuration = (iso: string) => {
+        const match = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
+        return match ? Number(match[1] || 0) * 3600 + Number(match[2] || 0) * 60 + Number(match[3] || 0) : 0;
+      };
+      const items = (searchData.items || []).flatMap((item: any) => {
+        const videoId = item.id?.videoId;
+        const detail: any = details.get(videoId);
+        if (!videoId || !detail?.status?.embeddable || detail.status.privacyStatus !== "public") return [];
+        return [{
+          videoId,
+          title: item.snippet?.title || "",
+          description: item.snippet?.description || "",
+          channelTitle: item.snippet?.channelTitle || "",
+          publishedAt: item.snippet?.publishedAt || "",
+          durationSeconds: parseDuration(detail.contentDetails?.duration || "")
+        }];
+      });
+      res.setHeader("Cache-Control", "public, max-age=300");
+      return res.json({ items });
+    } catch (error: any) {
+      console.error("YouTube search error:", error);
+      return res.status(502).json({ error: error?.message || "Erro ao consultar o YouTube." });
+    }
+  });
+
 
   // API route to toggle like
   app.post("/api/toggle-like", async (req, res) => {
