@@ -37,15 +37,15 @@ const emptyIds = () => ({ archiveId: null, imdbId: null, tmdbCompanyId: null, tm
 const extractYouTubeId = (value?: string | null): string | null => {
     if (!value) return null;
     const raw = value.trim();
-    if (/^[\\w-]{11}$/.test(raw)) return raw;
+    if (/^[\w-]{11}$/.test(raw)) return raw;
     try {
         const u = new URL(raw);
         const id = u.hostname.includes('youtu.be') ? u.pathname.split('/').filter(Boolean)[0]
-            : u.searchParams.get('v') || u.pathname.match(/\\/(?:embed|shorts|live|v)\\/([^/?]+)/)?.[1];
-        return id && /^[\\w-]{11}$/.test(id) ? id : null;
+            : u.searchParams.get('v') || u.pathname.match(/\/(?:embed|shorts|live|v)\/([^/?]+)/)?.[1];
+        return id && /^[\w-]{11}$/.test(id) ? id : null;
     } catch { return null; }
 };
-const cleanTitle = (s = '') => s.normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+const cleanTitle = (s = '') => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 const similarity = (candidate: string, titles: string[]) => {
     const a = cleanTitle(candidate);
     if (!a) return 0;
@@ -72,7 +72,7 @@ export const fetchMovieIdentifiers = async (qid: string): Promise<{
     archiveId: string | null; imdbId: string | null; tmdbCompanyId: string | null;
     tmdbId: string | null; commonsVideo: string | null; youtubeId: string | null;
 }> => {
-    if (!/^Q\\d+$/.test(qid || '')) return emptyIds();
+    if (!/^Q\d+$/.test(qid || '')) return emptyIds();
     const query = `
       SELECT ?archive ?archiveAlt ?imdb ?tmdbMovie ?tmdbTv ?companyTmdb ?commons ?youtube WHERE {
         BIND(wd:${qid} AS ?item)
@@ -110,7 +110,7 @@ export const searchArchiveOrg = async (options: {
     const queries: string[] = [];
     if (options.imdbId) queries.push(`mediatype:movies AND "${options.imdbId.replace(/[^a-zA-Z0-9]/g, '')}"`);
     for (const t of titles) {
-        const safe = t.replace(/["\\\\]/g, ' ').replace(/\\s+/g, ' ').trim();
+        const safe = t.replace(/["\\]/g, ' ').replace(/\s+/g, ' ').trim();
         if (!safe) continue;
         if (options.year) queries.push(`mediatype:movies AND title:"${safe}" AND year:${options.year}`);
         queries.push(`mediatype:movies AND title:"${safe}"`);
@@ -139,11 +139,11 @@ export const searchArchiveOrg = async (options: {
             if (similarity(meta.metadata?.title || item.title || '', titles) < 0.58) continue;\n            if (options.year && meta.metadata?.year && Math.abs(Number(meta.metadata.year) - options.year) > 2) continue;
             const files = (meta.files || []).filter((f:any) => {
                 const n = String(f.name || '').toLowerCase(), fmt = String(f.format || '').toLowerCase();
-                if (!/\\.(mp4|m4v|webm|ogv|ogg)(?:$|[?#])/i.test(n)) return false;
+                if (!/\.(mp4|m4v|webm|ogv|ogg)(?:$|[?#])/i.test(n)) return false;
                 if (/sample|trailer|preview|thumb|poster|cover|subtitle|torrent/.test(n)) return false;
                 return fmt.includes('video') || fmt.includes('h.264') || fmt.includes('mpeg') || fmt.includes('webm') || fmt.includes('ogg') || f.source === 'original';
             }).sort((a:any,b:any) => {
-                const rank=(f:any)=> (/\\.mp4$/i.test(f.name)?50:/\\.webm$/i.test(f.name)?30:10)+(String(f.format).toLowerCase().includes('h.264')?20:0)+(f.source==='original'?5:0);
+                const rank=(f:any)=> (/\.mp4$/i.test(f.name)?50:/\.webm$/i.test(f.name)?30:10)+(String(f.format).toLowerCase().includes('h.264')?20:0)+(f.source==='original'?5:0);
                 return rank(b)-rank(a);
             });
             const file=files[0]; if (!file?.name) continue;
@@ -170,7 +170,7 @@ export const searchWikimediaCommons = async (options: {
             const data=await fetchJson(u.toString());
             const page:any=Object.values(data.query?.pages || {})[0], info=page?.imageinfo?.[0];
             const mime=String(info?.mime||'').toLowerCase(), fileUrl=String(info?.url||'');
-            if (!fileUrl || !(mime.startsWith('video/') || /\\.(mp4|m4v|webm|ogv|ogg)(?:$|[?#])/i.test(fileUrl))) return null;
+            if (!fileUrl || !(mime.startsWith('video/') || /\.(mp4|m4v|webm|ogv|ogg)(?:$|[?#])/i.test(fileUrl))) return null;
             return { directUrl:fileUrl.replace(/^http:/,'https:'), fileName:clean,
                 pageUrl:`https://commons.wikimedia.org/wiki/File:${encodeURIComponent(clean.replace(/ /g,'_'))}` };
         } catch { return null; }
@@ -178,7 +178,7 @@ export const searchWikimediaCommons = async (options: {
     if (options.commonsUrl) {
         try {
             const u=new URL(options.commonsUrl);
-            const m=u.pathname.match(/Special:FilePath\\/(.+)$/i) || u.pathname.match(/\\/wiki\\/File:(.+)$/i);
+            const m=u.pathname.match(/Special:FilePath\/(.+)$/i) || u.pathname.match(/\/wiki\/File:(.+)$/i);
             if (m?.[1]) { const exact=await resolveFile(decodeURIComponent(m[1]).split('/')[0]); if (exact) return exact; }
         } catch { /* invalid URL: title search below */ }
     }
@@ -194,7 +194,7 @@ export const searchWikimediaCommons = async (options: {
             for (const p of pages) {
                 if (similarity(String(p.title||'').replace(/^File:/i,''),titles)<0.58) continue;
                 const info=p.imageinfo?.[0], mime=String(info?.mime||'').toLowerCase(), url=String(info?.url||'');
-                if (!(mime.startsWith('video/') || /\\.(mp4|m4v|webm|ogv|ogg)(?:$|[?#])/i.test(url))) continue;
+                if (!(mime.startsWith('video/') || /\.(mp4|m4v|webm|ogv|ogg)(?:$|[?#])/i.test(url))) continue;
                 const valid=await resolveFile(p.title); if (valid) return valid;
             }
         } catch (e) { console.warn('Commons search failed:',e); }
@@ -222,7 +222,7 @@ const searchYouTubeByTitle = async (movie: Movie): Promise<string | null> => {
                 !/trailer|teaser|review|reaction|soundtrack|interview|behind the scenes|clip|shorts/i.test(x.item.title || ''))
               .sort((a: any, b: any) => b.score - a.score || b.duration - a.duration);
             const id = ranked[0]?.item?.videoId;
-            if (id && /^[\\w-]{11}$/.test(id)) return id;
+            if (id && /^[\w-]{11}$/.test(id)) return id;
         } catch (error) {
             // YouTube title search is optional; keep Archive and Commons available if the API key is absent.
             console.info('YouTube title search unavailable:', error);
