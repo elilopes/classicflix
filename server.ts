@@ -266,7 +266,7 @@ async function startServer() {
       const detailResponse = await fetch(`https://www.googleapis.com/youtube/v3/videos?${detailParams.toString()}`);
       const detailData: any = await detailResponse.json();
       if (!detailResponse.ok) throw new Error(detailData?.error?.message || "Falha ao validar vídeos do YouTube.");
-      const details = new Map((detailData.items || []).map((item: any) => [item.id, item]));
+      const details = new Map<string, any>((detailData.items || []).map((item: any) => [String(item.id), item] as [string, any]));
       const parseDuration = (iso: string) => {
         const match = iso.match(/PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?/);
         return match ? Number(match[1] || 0) * 3600 + Number(match[2] || 0) * 60 + Number(match[3] || 0) : 0;
