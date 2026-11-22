@@ -136,7 +136,8 @@ export const searchArchiveOrg = async (options: {
         try {
             const meta = await fetchJson(`https://archive.org/metadata/${encodeURIComponent(item.identifier)}`);
             if (meta.metadata?.mediatype !== 'movies') continue;
-            if (similarity(meta.metadata?.title || item.title || '', titles) < 0.58) continue;\n            if (options.year && meta.metadata?.year && Math.abs(Number(meta.metadata.year) - options.year) > 2) continue;
+            if (similarity(meta.metadata?.title || item.title || '', titles) < 0.58) continue;
+            if (options.year && meta.metadata?.year && Math.abs(Number(meta.metadata.year) - options.year) > 2) continue;
             const files = (meta.files || []).filter((f:any) => {
                 const n = String(f.name || '').toLowerCase(), fmt = String(f.format || '').toLowerCase();
                 if (!/\.(mp4|m4v|webm|ogv|ogg)(?:$|[?#])/i.test(n)) return false;
@@ -288,7 +289,8 @@ const persistVideoSource = async (data: {
     if (imdbId) movie.identifiers.imdbId = imdbId;
     if (tmdbCompanyId) movie.identifiers.tmdbCompanyId = tmdbCompanyId;
     if (tmdbId) movie.identifiers.tmdbId = tmdbId;
-    if (commons) movie.identifiers.wikimediaCommons = commons;\n    if (youtube) movie.identifiers.youtubeId = extractYouTubeId(youtube) || movie.identifiers.youtubeId;
+    if (commons) movie.identifiers.wikimediaCommons = commons;
+    if (youtube) movie.identifiers.youtubeId = extractYouTubeId(youtube) || movie.identifiers.youtubeId;
 
     try {
         const supabase = await getSupabase();
