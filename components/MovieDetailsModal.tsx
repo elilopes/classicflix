@@ -792,13 +792,11 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
       setSources(res);
       const supabase = await getSupabase();
       if (supabase) {
-        await supabase.from('identifiers').upsert({
-          wikidataid: movie.wikidataId,
-          commons: res.commons,
-          youtube: res.youtube,
-          archiveid: res.archiveid,
-          updatedat: new Date().toISOString()
-        });
+        const identifierPatch: Record<string, any> = { wikidataid: movie.wikidataId, updatedat: new Date().toISOString() };
+        if (res.commons) identifierPatch.commons = res.commons;
+        if (res.youtube) identifierPatch.youtube = res.youtube;
+        if (res.archiveid) identifierPatch.archiveid = res.archiveid;
+        await supabase.from('identifiers').upsert(identifierPatch, { onConflict: 'wikidataid' });
       }
     } catch (e) {
       console.error("Error refreshing sources:", e);
@@ -816,7 +814,7 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
 
     // 2. Search Archive.org and Wikimedia Commons APIs for direct playable link
     setIsSearchingVideo(true);
-    setVideoSearchMessage(language === 'pt' ? 'Pesquisando filme no Archive.org e Wikimedia Commons...' : 'Searching video on Archive.org & Wikimedia Commons...');
+    setVideoSearchMessage(language === 'pt' ? 'Pesquisando filme no YouTube, Archive.org e Wikimedia Commons...' : 'Searching video on YouTube, Archive.org & Wikimedia Commons...');
     try {
       const result = await findAndSaveMovieVideoSource(movie);
       if (result.success && result.directUrl) {
@@ -852,7 +850,7 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
 
   const handleExplicitSearchVideo = async () => {
     setIsSearchingVideo(true);
-    setVideoSearchMessage(language === 'pt' ? 'Pesquisando fontes de vídeo no Archive.org e Wikimedia Commons...' : 'Searching video on Archive.org & Wikimedia Commons...');
+    setVideoSearchMessage(language === 'pt' ? 'Pesquisando fontes de vídeo no YouTube, Archive.org e Wikimedia Commons...' : 'Searching video on YouTube, Archive.org & Wikimedia Commons...');
     try {
       const result = await findAndSaveMovieVideoSource(movie);
       if (result.success && result.directUrl) {
@@ -1407,7 +1405,7 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
                                 disabled={isSearchingVideo}
                               >
                                 {isSearchingVideo ? <Loader2 size={20} className="animate-spin" /> : <Play size={20} fill={effectiveVideoUrl ? "white" : "none"} />}
-                                {effectiveVideoUrl ? (language === 'pt' ? 'Assistir Filme' : 'Play Movie') : (language === 'pt' ? 'Buscar no Archive/Commons' : 'Search Archive/Commons')}
+                                {effectiveVideoUrl ? (language === 'pt' ? 'Assistir Filme' : 'Play Movie') : (language === 'pt' ? 'Buscar Vídeo' : 'Search Video')}
                               </button>
 
                               {/* Botão Dedicado: Pesquisar Vídeo (findAndSaveMovieVideoSource) */}
@@ -1415,7 +1413,7 @@ export const MovieDetailsModal: React.FC<MovieDetailsModalProps> = ({
                                 className="btn btn-lg btn-outline-info px-4 d-flex align-items-center gap-2 shadow-sm rounded-pill"
                                 onClick={handleExplicitSearchVideo}
                                 disabled={isSearchingVideo}
-                                title={language === 'pt' ? 'Pesquisar vídeo no Archive.org e Wikimedia Commons via APIs' : 'Search video stream on Archive.org & Commons'}
+                                title={language === 'pt' ? 'Pesquisar vídeo no YouTube, Archive.org e Wikimedia Commons via APIs' : 'Search YouTube, Archive.org & Commons video'}
                               >
                                 {isSearchingVideo ? <Loader2 size={20} className="animate-spin text-info" /> : <Search size={20} className="text-info" />}
                                 <span>{language === 'pt' ? 'Buscar Vídeo' : 'Search Video'}</span>
