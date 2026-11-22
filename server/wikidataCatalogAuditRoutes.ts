@@ -6,7 +6,6 @@ const FIREBASE_WEB_API_KEY =
 const MAX_QIDS_PER_BATCH = 50;
 const requestWindows = new Map<string, { startedAt: number; count: number }>();
 
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function verifyFirebaseAdmin(req: Request, res: Response, next: NextFunction) {
   const match = (req.headers.authorization || "").match(/^Bearer\s+(.+)$/i);
