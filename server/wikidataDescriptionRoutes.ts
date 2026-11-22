@@ -125,7 +125,7 @@ async function fetchWikidataBatch(qids: string[]) {
     props: "descriptions",
     languages: "en",
     format: "json",
-    maxlag: "5",
+    maxlag: "15",
   });
   const response = await fetch(`https://www.wikidata.org/w/api.php?${params.toString()}`, {
     headers: {
@@ -136,15 +136,24 @@ async function fetchWikidataBatch(qids: string[]) {
   });
   const payload = await response.json().catch(() => ({})) as any;
   if (!response.ok || payload?.error) {
+    const errorCode = String(payload?.error?.code || "");
+    const parsedRetryAfter = Number(response.headers.get("retry-after") || 0);
     const error: any = new Error(payload?.error?.info || `Wikidata API respondeu HTTP ${response.status}`);
     error.status = response.status;
-    error.retryAfter = Number(response.headers.get("retry-after") || 0);
+    error.code = errorCode;
+    error.retryAfter = Number.isFinite(parsedRetryAfter) && parsedRetryAfter > 0 ? parsedRetryAfter : 0;
+    error.isTransientLag =
+      response.status === 429 ||
+      response.status === 503 ||
+      errorCode.toLowerCase() === "maxlag";
     throw error;
   }
   return payload?.entities || {};
 }
 
 async function runWorker(client: SupabaseClient): Promise<void> {
+  let consecutiveLagErrors = 0;
+
   while (true) {
     const { data: job, error: jobError } = await client
       .from("wikidata_description_jobs")
@@ -178,6 +187,7 @@ async function runWorker(client: SupabaseClient): Promise<void> {
     const qids = items.map((item) => item.wikidataid);
     try {
       const entities = await fetchWikidataBatch(qids);
+      consecutiveLagErrors = 0;
       const descriptions: Array<{ qid: string; description: string }> = [];
       const noDescription: string[] = [];
       const missingEntities: string[] = [];
@@ -215,21 +225,56 @@ async function runWorker(client: SupabaseClient): Promise<void> {
         last_error: "Entidade não encontrada no Wikidata.",
       });
     } catch (error: any) {
-      const retryAfter = Number(error?.retryAfter || 0);
-      for (const item of items) {
-        const retry = item.attempts < MAX_ATTEMPTS;
-        const exponential = Math.min(60 * 60, 30 * (2 ** Math.max(0, item.attempts - 1)));
-        const delaySeconds = retryAfter > 0 ? Math.min(3600, retryAfter) : exponential;
-        await updateQueue(client, [item.wikidataid], {
-          status: retry ? "pending" : "failed",
-          next_retry_at: retry ? new Date(Date.now() + delaySeconds * 1000).toISOString() : null,
-          locked_at: null,
-          last_error: String(error?.message || error).slice(0, 1000),
-        });
-      }
-      if (Number(error?.status) === 429 || Number(error?.status) === 503 ||
-          String(error?.message || "").toLowerCase().includes("maxlag")) {
-        await sleep(Math.max(RETRY_DELAY_MS, retryAfter * 1000));
+      const retryAfter = Number.isFinite(Number(error?.retryAfter)) ? Math.max(0, Number(error.retryAfter)) : 0;
+      const errorMessage = String(error?.message || error).slice(0, 1000);
+      const isTransientLag =
+        Boolean(error?.isTransientLag) ||
+        Number(error?.status) === 429 ||
+        Number(error?.status) === 503 ||
+        /maxlag|lagged|timeout|timed out|aborted|econnreset|fetch failed/i.test(errorMessage);
+
+      if (isTransientLag) {
+        consecutiveLagErrors += 1;
+        const lagDelaySeconds = Math.min(
+          300,
+          Math.max(retryAfter, 15 * (2 ** Math.min(4, consecutiveLagErrors - 1)))
+        );
+        const nextRetryAt = new Date(Date.now() + lagDelaySeconds * 1000).toISOString();
+
+        const byRestoredAttempts = new Map<number, string[]>();
+        for (const item of items) {
+          const restoredAttempts = Math.max(0, item.attempts - 1);
+          const group = byRestoredAttempts.get(restoredAttempts) || [];
+          group.push(item.wikidataid);
+          byRestoredAttempts.set(restoredAttempts, group);
+        }
+
+        for (const [restoredAttempts, groupQids] of byRestoredAttempts.entries()) {
+          await updateQueue(client, groupQids, {
+            status: "pending",
+            attempts: restoredAttempts,
+            next_retry_at: nextRetryAt,
+            locked_at: null,
+            last_error: errorMessage,
+          });
+        }
+
+        await sleep(Math.min(30_000, Math.max(RETRY_DELAY_MS, lagDelaySeconds * 1000)));
+      } else {
+        consecutiveLagErrors = 0;
+        const nowIso = new Date().toISOString();
+        for (const item of items) {
+          const retry = item.attempts < MAX_ATTEMPTS;
+          const exponential = Math.min(60 * 60, 30 * (2 ** Math.max(0, item.attempts - 1)));
+          const delaySeconds = Math.max(exponential, Math.min(3600, retryAfter));
+          await updateQueue(client, [item.wikidataid], {
+            status: retry ? "pending" : "failed",
+            next_retry_at: retry ? new Date(Date.now() + delaySeconds * 1000).toISOString() : nowIso,
+            processed_at: retry ? null : nowIso,
+            locked_at: null,
+            last_error: errorMessage,
+          });
+        }
       }
     }
 
@@ -284,6 +329,34 @@ export function createWikidataDescriptionRouter() {
       if (seedError) throw seedError;
 
       const now = new Date().toISOString();
+      if (!workerPromise) {
+        const { error: releaseError } = await client
+          .from("wikidata_description_queue")
+          .update({
+            status: "pending",
+            locked_at: null,
+            next_retry_at: now,
+            updated_at: now,
+          })
+          .eq("status", "processing");
+        if (releaseError) throw releaseError;
+
+        const { error: requeueLagError } = await client
+          .from("wikidata_description_queue")
+          .update({
+            status: "pending",
+            attempts: 0,
+            locked_at: null,
+            next_retry_at: now,
+            processed_at: null,
+            last_error: null,
+            updated_at: now,
+          })
+          .eq("status", "failed")
+          .or("last_error.ilike.%wdqs%,last_error.ilike.%lagged%,last_error.ilike.%maxlag%,last_error.ilike.%429%,last_error.ilike.%503%");
+        if (requeueLagError) throw requeueLagError;
+      }
+
       const { error } = await client.from("wikidata_description_jobs").upsert({
         job_key: JOB_KEY,
         status: "running",
