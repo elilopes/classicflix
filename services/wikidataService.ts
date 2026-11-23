@@ -13,58 +13,129 @@ const toHttps = (url: string | undefined | null): string => {
   return url;
 };
 
-// Helper function to perform SPARQL queries with fallback strategy
-const executeSparqlQuery = async (query: string): Promise<any> => {
+// Helper function to perform SPARQL queries via server proxy first, then direct CORS fallbacks
+const executeSparqlQueryWithDetails = async (
+  query: string
+): Promise<{ data: any | null; error?: string }> => {
   const finalQuery = query.replace(/\[AUTO_LANGUAGE\]/g, "en");
-  
+  let lastError = "";
+
+  // 1. Try server-side proxy first (sends Wikimedia User-Agent and avoids browser CORS/throttling)
+  if (typeof window !== "undefined") {
+    try {
+      const proxyRes = await fetch("/api/wikidata/sparql", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: finalQuery }),
+      });
+      if (proxyRes.ok) {
+        return { data: await proxyRes.json() };
+      }
+      const errJson = await proxyRes.json().catch(() => ({})) as any;
+      lastError = errJson?.error || `HTTP ${proxyRes.status}`;
+    } catch (error: any) {
+      lastError = error?.message || "Falha de conexão com o proxy SPARQL.";
+    }
+  }
+
+  // 2. Fallback: direct POST to Wikidata SPARQL
   try {
     const params = new URLSearchParams();
-    params.append('query', finalQuery);
-    params.append('format', 'json');
+    params.append("query", finalQuery);
+    params.append("format", "json");
 
-    // Attempt POST first
     const response = await fetch("https://query.wikidata.org/sparql", {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Accept': 'application/sparql-results+json'
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/sparql-results+json",
       },
       body: params.toString(),
-      mode: 'cors',
-      credentials: 'omit'
+      mode: "cors",
+      credentials: "omit",
     });
 
     if (response.ok) {
-        return await response.json();
+      return { data: await response.json() };
     }
-  } catch (error) {
-    // Silent failure for POST
+    lastError = `Wikidata SPARQL respondeu HTTP ${response.status}`;
+  } catch (error: any) {
+    lastError = error?.message || lastError;
   }
 
-  // Fallback to GET with simplified headers and origin=* for maximum CORS compatibility
-  try {
-     const url = new URL("https://query.wikidata.org/sparql");
-     url.searchParams.append("query", finalQuery);
-     url.searchParams.append("format", "json");
-     url.searchParams.append("origin", "*"); // Critical fix for 'Failed to fetch'
+  // 3. Fallback: direct GET with origin=* (skipped if query URL would exceed safe GET limits)
+  if (finalQuery.length <= 6000) {
+    try {
+      const url = new URL("https://query.wikidata.org/sparql");
+      url.searchParams.append("query", finalQuery);
+      url.searchParams.append("format", "json");
+      url.searchParams.append("origin", "*");
 
-     const response = await fetch(url.toString(), {
-       method: 'GET',
-       mode: 'cors',
-       credentials: 'omit'
-     });
+      const response = await fetch(url.toString(), {
+        method: "GET",
+        mode: "cors",
+        credentials: "omit",
+      });
 
-     if (response.ok) {
-        try {
-            return await response.json();
-        } catch (e) {
-            return null;
-        }
-     }
-  } catch (error) {
-     console.warn("Wikidata fetch failed (likely network/CORS)", error);
+      if (response.ok) {
+        return { data: await response.json() };
+      }
+      lastError = `Wikidata SPARQL respondeu HTTP ${response.status}`;
+    } catch (error: any) {
+      console.warn("Wikidata fetch failed (likely network/CORS)", error);
+      lastError = error?.message || lastError;
+    }
   }
-  return null;
+
+  return { data: null, error: lastError || undefined };
+};
+
+const executeSparqlQuery = async (query: string): Promise<any> => {
+  const { data } = await executeSparqlQueryWithDetails(query);
+  return data;
+};
+
+const fetchWikidataEntitiesChunk = async (
+  qids: string[],
+  props: string = "labels|descriptions|claims",
+  languages: string = "en|pt|es|fr|de|it|ru"
+): Promise<Record<string, any>> => {
+  if (!qids.length) return {};
+
+  if (typeof window !== "undefined") {
+    try {
+      const params = new URLSearchParams({
+        ids: qids.join("|"),
+        props,
+        languages,
+      });
+      const res = await fetch(`/api/wikidata/entities?${params.toString()}`);
+      if (res.ok) {
+        const json = await res.json();
+        return json?.entities || {};
+      }
+    } catch {
+      // Fall through to direct browser fetch
+    }
+  }
+
+  const directParams = new URLSearchParams({
+    action: "wbgetentities",
+    ids: qids.join("|"),
+    props,
+    languages,
+    format: "json",
+    origin: "*",
+  });
+  const directRes = await fetch(`https://www.wikidata.org/w/api.php?${directParams.toString()}`);
+  if (!directRes.ok) {
+    throw new Error(`Wikidata wbgetentities respondeu HTTP ${directRes.status}`);
+  }
+  const directJson = await directRes.json();
+  if (directJson?.error) {
+    throw new Error(directJson.error.info || "Erro ao consultar entidades no Wikidata.");
+  }
+  return directJson?.entities || {};
 };
 
 /**
@@ -746,11 +817,10 @@ export interface PublicDomainSearchOptions {
     onlyWithTitle?: boolean;
 }
 
-export const buildPublicDomainProductionsSparql = (
+const buildPublicDomainWherePattern = (
     category: PublicDomainProductionCategory = 'all',
-    limit: number = 150,
     options: PublicDomainSearchOptions = {}
-): string => {
+): { wherePattern: string; titleTriple: string; imageTriple: string } => {
     const allVisualQids = Object.values(PUBLIC_DOMAIN_INSTANCE_MAP)
         .map((entry) => `wd:${entry.qid}`)
         .join(' ');
@@ -766,8 +836,6 @@ export const buildPublicDomainProductionsSparql = (
 
     let wherePattern = '';
     if (category === 'open_source_film') {
-        // Open-source film (Q917641), copyright status P6216=Q18810333 (CC BY 2.5 Generic)
-        // e todas as 13 instâncias visuais com copyright license P275 Creative Commons
         wherePattern = `{
     ?item wdt:P31 wd:Q917641 .   # open-source film
     BIND(wd:Q917641 AS ?matchedInstance)
@@ -820,13 +888,17 @@ export const buildPublicDomainProductionsSparql = (
   ${docFilmBranch}`;
     }
 
-    const titleTriple = options.onlyWithTitle
-        ? `  ?item wdt:P1476 ?p1476Title .`
-        : `  OPTIONAL { ?item wdt:P1476 ?p1476Title . }`;
+    const titleTriple = options.onlyWithTitle ? `  ?item wdt:P1476 ?p1476Title .` : '';
+    const imageTriple = options.onlyWithImage ? `  ?item wdt:P18 ?image .` : '';
+    return { wherePattern, titleTriple, imageTriple };
+};
 
-    const imageTriple = options.onlyWithImage
-        ? `  ?item wdt:P18 ?image .`
-        : `  OPTIONAL { ?item wdt:P18 ?image . }`;
+export const buildPublicDomainProductionsSparql = (
+    category: PublicDomainProductionCategory = 'all',
+    limit: number = 150,
+    options: PublicDomainSearchOptions = {}
+): string => {
+    const { wherePattern, titleTriple, imageTriple } = buildPublicDomainWherePattern(category, options);
 
     return `SELECT ?item
   (SAMPLE(?p1476Title) AS ?titleP1476)
@@ -856,9 +928,15 @@ export const buildPublicDomainProductionsSparql = (
   (SAMPLE(?commonsStr) AS ?commons)
   (SAMPLE(?tmdbMovieId) AS ?tmdbMovie)
   (SAMPLE(?tmdbTvId) AS ?tmdbTv)
+WITH {
+  SELECT DISTINCT ?item ?matchedInstance ?ccLicense ?isDoc WHERE {
+    ${wherePattern}
+${titleTriple ? `${titleTriple}\n` : ''}${imageTriple ? `${imageTriple}\n` : ''}  }
+  LIMIT ${limit}
+} AS %candidates
 WHERE {
-  ${wherePattern}
-${titleTriple}
+  INCLUDE %candidates .
+  OPTIONAL { ?item wdt:P1476 ?p1476Title . }
   OPTIONAL { ?item rdfs:label ?ptLabelRaw . FILTER(LANG(?ptLabelRaw) = "pt") }
   OPTIONAL { ?item schema:description ?descEnRaw . FILTER(LANG(?descEnRaw) = "en") }
   OPTIONAL { ?item schema:description ?descPtRaw . FILTER(LANG(?descPtRaw) = "pt") }
@@ -869,7 +947,7 @@ ${titleTriple}
   OPTIONAL { ?item wdt:P2047 ?durVal . }
   OPTIONAL { ?item wdt:P136 ?genreItem . }
   OPTIONAL { ?item wdt:P921 ?subjectItem . }
-${imageTriple}
+  OPTIONAL { ?item wdt:P18 ?image . }
   OPTIONAL { ?item wdt:P724 ?iaId . }
   OPTIONAL { ?item wdt:P345 ?imdbId . }
   OPTIONAL { ?item wdt:P2671 ?gkgId . }
@@ -891,124 +969,284 @@ ${imageTriple}
   }
 }
 GROUP BY ?item
-ORDER BY DESC(?date)
-LIMIT ${limit}`;
+ORDER BY DESC(?date)`;
+};
+
+const getFirstClaimString = (claims: any, prop: string): string => {
+    const list = claims?.[prop];
+    if (!Array.isArray(list)) return '';
+    for (const c of list) {
+        const dv = c?.mainsnak?.datavalue;
+        if (!dv) continue;
+        if (typeof dv.value === 'string') return dv.value.trim();
+        if (dv.value && typeof dv.value.text === 'string') return dv.value.text.trim();
+    }
+    return '';
+};
+
+const getClaimEntityIds = (claims: any, prop: string): string[] => {
+    const list = claims?.[prop];
+    if (!Array.isArray(list)) return [];
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const c of list) {
+        const id = c?.mainsnak?.datavalue?.value?.id;
+        if (typeof id === 'string') {
+            const upper = id.toUpperCase();
+            if (!seen.has(upper)) {
+                seen.add(upper);
+                out.push(upper);
+            }
+        }
+    }
+    return out;
+};
+
+const getPreferredMonolingualTitle = (claims: any): string => {
+    const list = claims?.P1476;
+    if (!Array.isArray(list)) return '';
+    const entries = list
+        .map((c: any) => c?.mainsnak?.datavalue?.value)
+        .filter((v: any) => v && typeof v.text === 'string' && v.text.trim());
+    if (!entries.length) return '';
+    const en = entries.find((v: any) => String(v.language || '').toLowerCase() === 'en');
+    const pt = entries.find((v: any) => String(v.language || '').toLowerCase() === 'pt');
+    return String((en || pt || entries[0]).text).trim();
+};
+
+const getEntityLabel = (entity: any, preferredLangs: string[]): string => {
+    const labels = entity?.labels || {};
+    for (const lang of preferredLangs) {
+        const val = labels[lang]?.value;
+        if (typeof val === 'string' && val.trim()) return val.trim();
+    }
+    const first = Object.values(labels)[0] as any;
+    return typeof first?.value === 'string' ? first.value.trim() : '';
 };
 
 /**
  * Pesquisa no Wikidata produções visuais em domínio público (P6216=Q19652)
  * e produções Open-source / Creative Commons (Q917641, P6216=Q18810333, P275 CC)
- * importando metadados completos (P136 genres, P921 themes/main subject, P57 director, P2047 duration, etc.)
+ * usando descoberta SPARQL mínima (<1s) + hidratação em lote via wbgetentities.
  */
 export const searchPublicDomainProductionsInWikidata = async (
     category: PublicDomainProductionCategory = 'all',
     limit: number = 150,
     options: PublicDomainSearchOptions = {}
 ): Promise<WikidataPublicDomainProduction[]> => {
-    const sparql = buildPublicDomainProductionsSparql(category, limit, options);
-    const data = await executeSparqlQuery(sparql);
+    const { wherePattern, titleTriple, imageTriple } = buildPublicDomainWherePattern(category, options);
+    const discoverySparql = `SELECT DISTINCT ?item ?matchedInstance ?ccLicense ?isDoc WHERE {
+  ${wherePattern}
+${titleTriple ? `${titleTriple}\n` : ''}${imageTriple ? `${imageTriple}\n` : ''}}
+LIMIT ${limit}`;
+
+    const { data, error } = await executeSparqlQueryWithDetails(discoverySparql);
     if (!data || !data.results || !data.results.bindings) {
-        throw new Error("Não foi possível obter resposta do Wikidata SPARQL no momento.");
+        throw new Error(
+            error
+                ? `Não foi possível obter resposta do Wikidata SPARQL no momento (${error}).`
+                : "Não foi possível obter resposta do Wikidata SPARQL no momento."
+        );
     }
 
     const bindings: any[] = data.results.bindings || [];
+    const candidateMap = new Map<
+        string,
+        { qid: string; instanceQid: string; licenseQid: string; isDocumentary: boolean }
+    >();
 
-    return bindings
-        .map((b: any) => {
-            const qid = b.item?.value?.split("/").pop()?.toUpperCase() || "";
-            if (!qid) return null;
+    for (const b of bindings) {
+        const qid = b.item?.value?.split("/").pop()?.toUpperCase() || "";
+        if (!/^Q[1-9]\d*$/.test(qid)) continue;
+        const instanceQid = b.instanceEntity?.value?.split("/").pop()?.toUpperCase() ||
+            b.matchedInstance?.value?.split("/").pop()?.toUpperCase() || "";
+        const licenseQid = b.ccLicense?.value?.split("/").pop()?.toUpperCase() || "";
+        const isDoc = b.isDoc?.value === "true" || b.isDoc?.value === "1";
 
-            const instanceQid = b.instanceEntity?.value?.split("/").pop()?.toUpperCase() || "";
-            const isDocumentary =
-                b.isDocumentaryFlag?.value === "true" || b.isDocumentaryFlag?.value === "1";
+        const existing = candidateMap.get(qid);
+        if (!existing) {
+            candidateMap.set(qid, { qid, instanceQid, licenseQid, isDocumentary: isDoc });
+        } else if (isDoc) {
+            existing.isDocumentary = true;
+        }
+    }
 
-            const mappedType = INSTANCE_QID_TO_TYPE_MAP[instanceQid];
-            const supabaseType = isDocumentary
-                ? "documentary film"
-                : mappedType || b.instanceName?.value || "film";
+    const candidates = Array.from(candidateMap.values());
+    if (!candidates.length) return [];
 
-            const instanceLabel = isDocumentary
-                ? "documentary film"
-                : mappedType || b.instanceName?.value || "film";
+    // 2. Hydrate full entities in chunks of 50 via wbgetentities
+    const entityByQid: Record<string, any> = {};
+    for (let i = 0; i < candidates.length; i += 50) {
+        const chunkQids = candidates.slice(i, i + 50).map((c) => c.qid);
+        const entities = await fetchWikidataEntitiesChunk(
+            chunkQids,
+            "labels|descriptions|claims",
+            "en|pt|es|fr|de|it|ru"
+        );
+        Object.assign(entityByQid, entities);
+    }
 
-            const licenseQid = b.licenseEntity?.value?.split("/").pop()?.toUpperCase() || "";
-            const licenseName = b.licenseName?.value || "";
-            let licenseLabel = "Public Domain (Q19652)";
-            if (licenseQid && licenseQid !== "Q19652") {
-                licenseLabel = licenseName ? `${licenseName} (${licenseQid})` : licenseQid;
-            } else if (!licenseQid && instanceQid === "Q917641") {
-                licenseLabel = "Open-source film (Q917641)";
+    // 3. Collect all referenced entity QIDs to resolve human-readable labels in batches
+    const refQids = new Set<string>();
+    for (const c of candidates) {
+        if (c.instanceQid) refQids.add(c.instanceQid);
+        if (c.licenseQid && c.licenseQid !== "Q19652") refQids.add(c.licenseQid);
+        const claims = entityByQid[c.qid]?.claims;
+        if (!claims) continue;
+        for (const prop of ["P364", "P57", "P162", "P136", "P921"]) {
+            for (const refId of getClaimEntityIds(claims, prop)) {
+                refQids.add(refId);
             }
+        }
+    }
 
-            let year = 0;
-            if (b.date?.value) {
-                const match = b.date.value.match(/\d{4}/);
-                if (match) year = parseInt(match[0], 10);
+    const refEntityByQid: Record<string, any> = {};
+    const refQidsList = Array.from(refQids);
+    for (let i = 0; i < refQidsList.length; i += 50) {
+        const chunkQids = refQidsList.slice(i, i + 50);
+        try {
+            const labelsChunk = await fetchWikidataEntitiesChunk(
+                chunkQids,
+                "labels",
+                "en|pt|es|fr|de|it|ru"
+            );
+            Object.assign(refEntityByQid, labelsChunk);
+        } catch {
+            // Non-fatal: individual missing labels fall back cleanly
+        }
+    }
+
+    const resolveRefLabels = (qids: string[], preferredLangs: string[]): string[] => {
+        const seen = new Set<string>();
+        const out: string[] = [];
+        for (const id of qids) {
+            const raw = getEntityLabel(refEntityByQid[id], preferredLangs);
+            const clean = raw ? sanitizeWikidataListValue(raw) : "";
+            if (!clean) continue;
+            const key = clean.toLowerCase();
+            if (!seen.has(key)) {
+                seen.add(key);
+                out.push(clean);
             }
+        }
+        return out;
+    };
 
-            let duration = "";
-            if (b.durationMinutes?.value) {
-                const durNum = Number(b.durationMinutes.value);
-                if (Number.isFinite(durNum) && durNum > 0) {
-                    duration = `${Math.floor(durNum)}m`;
-                }
+    const results: WikidataPublicDomainProduction[] = candidates.map((c) => {
+        const entity = entityByQid[c.qid] || {};
+        const claims = entity.claims || {};
+
+        const instanceLabelFromApi = c.instanceQid
+            ? getEntityLabel(refEntityByQid[c.instanceQid], ["en", "pt"])
+            : "";
+        const mappedType = INSTANCE_QID_TO_TYPE_MAP[c.instanceQid];
+        const supabaseType = c.isDocumentary
+            ? "documentary film"
+            : mappedType || instanceLabelFromApi || "film";
+        const instanceLabel = c.isDocumentary
+            ? "documentary film"
+            : mappedType || instanceLabelFromApi || "film";
+
+        const licenseName = c.licenseQid
+            ? getEntityLabel(refEntityByQid[c.licenseQid], ["en", "pt"])
+            : "";
+        let licenseLabel = "Public Domain (Q19652)";
+        if (c.licenseQid && c.licenseQid !== "Q19652") {
+            licenseLabel = licenseName ? `${licenseName} (${c.licenseQid})` : c.licenseQid;
+        } else if (!c.licenseQid && c.instanceQid === "Q917641") {
+            licenseLabel = "Open-source film (Q917641)";
+        }
+
+        let year = 0;
+        const pubTime = claims.P577?.[0]?.mainsnak?.datavalue?.value?.time;
+        if (typeof pubTime === "string") {
+            const match = pubTime.match(/(\d{4})/);
+            if (match) year = parseInt(match[1], 10);
+        }
+
+        let duration = "";
+        const durValue = claims.P2047?.[0]?.mainsnak?.datavalue?.value;
+        if (durValue?.amount !== undefined) {
+            const rawAmount = Number(String(durValue.amount).replace(/^\+/, ""));
+            if (Number.isFinite(rawAmount) && rawAmount > 0) {
+                const unit = String(durValue.unit || "");
+                const minutes = unit.endsWith("/Q11574")
+                    ? rawAmount / 60
+                    : unit.endsWith("/Q25235")
+                        ? rawAmount * 60
+                        : rawAmount;
+                if (minutes >= 1) duration = `${Math.floor(minutes)}m`;
             }
+        }
 
-            const titleP1476 = b.titleP1476?.value || "";
-            const label = b.label?.value || qid;
-            const iaId = b.archiveId?.value || "";
-            const imdbId = b.imdb?.value || "";
-            const googleKnowId = b.googleKnow?.value || "";
-            const ofdbId = b.ofdb?.value || "";
-            const youtubeId = b.youtube?.value || "";
-            const commons = b.commons?.value || "";
-            const tmdbId = b.tmdbMovie?.value || b.tmdbTv?.value || "";
-            const descriptionEn = b.descriptionEn?.value || "";
-            const descriptionPt = b.descriptionPt?.value || "";
-            const descriptionFallback = b.description?.value || descriptionEn || descriptionPt || "";
-            const directorFromP57 = b.director?.value ? sanitizeWikidataListValue(b.director.value) : "";
-            const producerFromP162 = b.producer?.value ? sanitizeWikidataListValue(b.producer.value) : "";
-            const directorName = directorFromP57 || producerFromP162;
-            const genres = parseCleanPipeList(b.genresList?.value);
-            if (isDocumentary && !genres.some((g) => g.toLowerCase().includes("documentary"))) {
-                genres.unshift("Documentary");
-            }
-            const themes = parseCleanPipeList(b.themesList?.value);
+        const titleP1476 = getPreferredMonolingualTitle(claims);
+        const label = getEntityLabel(entity, ["en", "pt", "es", "fr", "de", "it", "ru"]) || c.qid;
+        const labelPt = entity.labels?.pt?.value || "";
 
-            const labelPt = b.labelPt?.value || "";
+        const descriptionEn = entity.descriptions?.en?.value || "";
+        const descriptionPt = entity.descriptions?.pt?.value || "";
+        const firstDesc = (Object.values(entity.descriptions || {})[0] as any)?.value || "";
+        const descriptionFallback = descriptionEn || descriptionPt || firstDesc || "";
 
-            return {
-                wikidataId: qid,
-                originalTitle: titleP1476 || label,
-                titlePt: labelPt || undefined,
-                wikidataLabel: label,
-                hasP1476: Boolean(titleP1476),
-                instanceQid,
-                instanceLabel,
-                supabaseType,
-                isDocumentary,
-                language: b.origLang?.value || "Não informado",
-                year,
-                description: descriptionFallback,
-                descriptionEn,
-                descriptionPt,
-                director: directorName,
-                duration,
-                genres,
-                themes,
-                licenseLabel,
-                posterUrl: b.posterImage?.value ? getWikimediaThumbnail(b.posterImage.value, 600) : "",
-                videoUrl: iaId ? `https://archive.org/download/${iaId}/${iaId}.mp4` : "",
-                hasVideo: Boolean(iaId),
-                archiveId: iaId,
-                imdbId,
-                googleKnowId,
-                ofdbId,
-                youtubeId,
-                commons,
-                tmdbId,
-                tmdbType: b.tmdbTv?.value ? 'tv' : (b.tmdbMovie?.value ? 'movie' : undefined),
-            };
-        })
-        .filter(Boolean) as WikidataPublicDomainProduction[];
+        const langLabels = resolveRefLabels(getClaimEntityIds(claims, "P364"), ["pt", "en"]);
+        const directors = resolveRefLabels(getClaimEntityIds(claims, "P57"), ["en", "pt", "es", "fr"]);
+        const producers = resolveRefLabels(getClaimEntityIds(claims, "P162"), ["en", "pt", "es", "fr"]);
+        const directorName = directors.join(", ") || producers.join(", ");
+
+        const genres = resolveRefLabels(getClaimEntityIds(claims, "P136"), ["en", "pt"]);
+        if (c.isDocumentary && !genres.some((g) => g.toLowerCase().includes("documentary"))) {
+            genres.unshift("Documentary");
+        }
+        const themes = resolveRefLabels(getClaimEntityIds(claims, "P921"), ["en", "pt"]);
+
+        const imageFile = getFirstClaimString(claims, "P18");
+        const posterUrl = imageFile
+            ? `https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(imageFile.replace(/ /g, "_"))}?width=600`
+            : "";
+
+        const iaId = getFirstClaimString(claims, "P724");
+        const imdbId = getFirstClaimString(claims, "P345");
+        const googleKnowId = getFirstClaimString(claims, "P2671");
+        const ofdbId = getFirstClaimString(claims, "P3138");
+        const youtubeId = getFirstClaimString(claims, "P1651");
+        const commons = getFirstClaimString(claims, "P373");
+        const tmdbMovieId = getFirstClaimString(claims, "P4947");
+        const tmdbTvId = getFirstClaimString(claims, "P4985");
+        const tmdbId = tmdbMovieId || tmdbTvId;
+
+        return {
+            wikidataId: c.qid,
+            originalTitle: titleP1476 || label,
+            titlePt: labelPt || undefined,
+            wikidataLabel: label,
+            hasP1476: Boolean(titleP1476),
+            instanceQid: c.instanceQid,
+            instanceLabel,
+            supabaseType,
+            isDocumentary: c.isDocumentary,
+            language: langLabels[0] || "Não informado",
+            year,
+            description: descriptionFallback,
+            descriptionEn,
+            descriptionPt,
+            director: directorName,
+            duration,
+            genres,
+            themes,
+            licenseLabel,
+            posterUrl,
+            videoUrl: iaId ? `https://archive.org/download/${iaId}/${iaId}.mp4` : "",
+            hasVideo: Boolean(iaId),
+            archiveId: iaId,
+            imdbId,
+            googleKnowId,
+            ofdbId,
+            youtubeId,
+            commons,
+            tmdbId,
+            tmdbType: tmdbTvId ? 'tv' : (tmdbMovieId ? 'movie' : undefined),
+        };
+    });
+
+    return results.sort((a, b) => (b.year || 0) - (a.year || 0));
 };

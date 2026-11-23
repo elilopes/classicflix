@@ -119,6 +119,7 @@ if (!rootElement) {
   throw new Error("Could not find root element to mount to");
 }
 
+rootElement.removeAttribute('data-booting');
 const root = ReactDOM.createRoot(rootElement);
 
 try {

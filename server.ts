@@ -296,6 +296,30 @@ async function startServer() {
     }
   });
 
+  // Knowledge Graph Search API proxy: keeps the API key on the server
+  app.get("/api/knowledge-graph-search", async (req, res) => {
+    const apiKey = process.env.KNOWLEDGE_GRAPH_API_KEY;
+    const query = typeof req.query.q === "string" ? req.query.q.trim().slice(0, 180) : "";
+    if (!apiKey) return res.status(503).json({ error: "KNOWLEDGE_GRAPH_API_KEY não configurada no servidor." });
+    if (query.length < 2) return res.status(400).json({ error: "Informe um termo válido para pesquisar no Knowledge Graph." });
+    try {
+      const params = new URLSearchParams({
+        query,
+        limit: "5",
+        indent: "true",
+        key: apiKey,
+      });
+      const response = await fetch(`https://kgsearch.googleapis.com/v1/entities:search?${params.toString()}`);
+      const data: any = await response.json();
+      if (!response.ok) throw new Error(data?.error?.message || "Falha ao consultar o Knowledge Graph.");
+      res.setHeader("Cache-Control", "public, max-age=3600");
+      return res.json(data);
+    } catch (error: any) {
+      console.error("Knowledge Graph search error:", error);
+      return res.status(502).json({ error: error?.message || "Erro ao consultar o Knowledge Graph." });
+    }
+  });
+
 
   // API route to toggle like
   app.post("/api/toggle-like", async (req, res) => {
@@ -314,6 +338,98 @@ async function startServer() {
     } catch (error) {
       console.error("Error toggling like:", error);
       res.status(500).json({ error: "Failed to toggle like" });
+    }
+  });
+
+  // Wikidata SPARQL & Action API proxy routes (sends Wikimedia User-Agent cleanly from server)
+  app.post('/api/wikidata/sparql', async (req, res) => {
+    const query = typeof req.body?.query === 'string' ? req.body.query.trim() : '';
+    if (!query || query.length > 12000) {
+      return res.status(400).json({ error: 'Consulta SPARQL inválida ou muito longa.' });
+    }
+    try {
+      const response = await fetch('https://query.wikidata.org/sparql', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+          'Accept': 'application/sparql-results+json',
+          'User-Agent': 'ClassicFlix/1.0 (https://classicflix.app; mailto:liclopes@gmail.com)',
+        },
+        body: new URLSearchParams({ query, format: 'json' }).toString(),
+        signal: AbortSignal.timeout(45000),
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        const snippet = text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240);
+        return res.status(response.status === 429 ? 429 : 502).json({
+          error: `Wikidata SPARQL respondeu HTTP ${response.status}${snippet ? `: ${snippet}` : ''}`,
+        });
+      }
+      const data = JSON.parse(text);
+      return res.json(data);
+    } catch (error: any) {
+      const isTimeout = error?.name === 'TimeoutError' || error?.name === 'AbortError';
+      console.error('[Wikidata SPARQL Proxy] Error:', error);
+      return res.status(isTimeout ? 504 : 502).json({
+        error: isTimeout
+          ? 'Tempo limite excedido ao consultar o Wikidata SPARQL.'
+          : (error?.message || 'Falha ao consultar o Wikidata SPARQL.'),
+      });
+    }
+  });
+
+  app.get('/api/wikidata/entities', async (req, res) => {
+    const rawIds = typeof req.query.ids === 'string' ? req.query.ids : '';
+    const ids = [...new Set(
+      rawIds
+        .split(/[|,]/g)
+        .map((id) => id.trim().toUpperCase())
+        .filter((id) => /^Q[1-9]\d*$/.test(id))
+    )];
+    if (!ids.length || ids.length > 50) {
+      return res.status(400).json({ error: 'Informe entre 1 e 50 QIDs válidos.' });
+    }
+
+    const allowedProps = new Set(['labels', 'descriptions', 'claims']);
+    const rawProps = typeof req.query.props === 'string' ? req.query.props : 'labels|descriptions|claims';
+    const props = rawProps
+      .split('|')
+      .map((p) => p.trim())
+      .filter((p) => allowedProps.has(p));
+
+    const allowedLangs = new Set(['en', 'pt', 'es', 'fr', 'de', 'it', 'ru', 'ja']);
+    const rawLangs = typeof req.query.languages === 'string' ? req.query.languages : 'en|pt|es|fr|de|it|ru';
+    const languages = rawLangs
+      .split('|')
+      .map((l) => l.trim().toLowerCase())
+      .filter((l) => allowedLangs.has(l));
+
+    try {
+      const params = new URLSearchParams({
+        action: 'wbgetentities',
+        ids: ids.join('|'),
+        props: (props.length ? props : ['labels', 'descriptions', 'claims']).join('|'),
+        languages: (languages.length ? languages : ['en', 'pt']).join('|'),
+        format: 'json',
+        maxlag: '15',
+      });
+      const response = await fetch(`https://www.wikidata.org/w/api.php?${params.toString()}`, {
+        headers: {
+          'Accept': 'application/json',
+          'User-Agent': 'ClassicFlix/1.0 (https://classicflix.app; mailto:liclopes@gmail.com)',
+        },
+        signal: AbortSignal.timeout(25000),
+      });
+      const payload = await response.json().catch(() => ({})) as any;
+      if (!response.ok || payload?.error) {
+        return res.status(response.status === 429 ? 429 : 502).json({
+          error: payload?.error?.info || `Wikidata API respondeu HTTP ${response.status}.`,
+        });
+      }
+      return res.json({ entities: payload.entities || {} });
+    } catch (error: any) {
+      console.error('[Wikidata Entities Proxy] Error:', error);
+      return res.status(502).json({ error: error?.message || 'Falha ao consultar entidades no Wikidata.' });
     }
   });
 
@@ -1272,7 +1388,10 @@ async function startServer() {
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        hmr: false,
+      },
       appType: "spa",
     });
     app.use(vite.middlewares);
