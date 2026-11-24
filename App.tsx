@@ -3,7 +3,7 @@ import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { DECADES, RATING_CATEGORIES, APP_TRANSLATIONS } from './constants';
 import { Movie, FilterState, AppLanguage, UserMovieInteraction } from './types';
 import { AppModals } from './components/AppModals';
-import { VideoConverter } from './components/VideoConverter';
+import { ConvertPage } from './components/ConvertPage';
 import { HomeInterface, HOME_UI_CONFIG } from './components/HomeInterface';
 // @ts-ignore
 import jsPDF from 'jspdf';
@@ -571,7 +571,7 @@ export default function App() {
       />
 
       <TimelineModal isOpen={showTimelineModal} onClose={() => setShowTimelineModal(false)} movies={databaseMovies} language={appLanguage} />
-      <VideoConverter isOpen={showConverterModal} onClose={() => setShowConverterModal(false)} language={appLanguage} />
+      {showConverterModal && <ConvertPage onClose={() => setShowConverterModal(false)} language={appLanguage} />}
       
       {showEmojiGame && (
         <EmojiGame 
