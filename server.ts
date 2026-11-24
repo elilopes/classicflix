@@ -251,6 +251,53 @@ async function startServer() {
   app.use("/api/admin/wikidata-descriptions", createWikidataDescriptionRouter());
   app.use("/api/admin/wikidata-catalog-audit", createWikidataCatalogAuditRouter());
   app.use("/api/social-media", createSocialMediaRouter());
+
+  // Native FFmpeg conversion endpoint used by the ClassicFlix Convert page.
+  const classicflixConvertDir = path.join(process.cwd(), "tmp", "classicflix-convert");
+  fs.mkdirSync(classicflixConvertDir, { recursive: true });
+  const classicflixConvertUpload = multer({
+    dest: classicflixConvertDir,
+    limits: { fileSize: 1024 * 1024 * 1024 }
+  });
+  const classicflixAllowedFormats = new Set([
+    "mp4", "webm", "mkv", "avi", "mov", "flv",
+    "mp3", "wav", "aac", "m4a", "flac", "ogg", "wma", "aiff"
+  ]);
+  app.post("/api/convert-server", classicflixConvertUpload.single("file"), (req, res) => {
+    const uploaded = req.file;
+    if (!uploaded) return res.status(400).json({ error: "Selecione um arquivo de áudio ou vídeo." });
+    const format = String(req.body?.format || "mp4").toLowerCase();
+    if (!classicflixAllowedFormats.has(format)) {
+      fs.promises.unlink(uploaded.path).catch(() => {});
+      return res.status(400).json({ error: "Formato de saída não suportado." });
+    }
+    const outputName = `classicflix_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${format}`;
+    const outputPath = path.join(classicflixConvertDir, outputName);
+    let finished = false;
+    const cleanup = () => {
+      if (finished) return;
+      finished = true;
+      fs.promises.unlink(uploaded.path).catch(() => {});
+      fs.promises.unlink(outputPath).catch(() => {});
+    };
+    const command = ffmpeg(uploaded.path).toFormat(format);
+    if (["mp3", "aac", "m4a", "ogg", "wma"].includes(format)) command.noVideo();
+    command
+      .on("error", (error) => {
+        console.error("[ClassicFlix FFmpeg conversion]", error.message);
+        cleanup();
+        if (!res.headersSent) res.status(500).json({ error: "Falha na conversão. Verifique se o formato de origem é compatível." });
+      })
+      .on("end", () => {
+        res.download(outputPath, outputName, (error) => {
+          cleanup();
+          if (error && !res.headersSent) res.status(500).end("Falha ao enviar o arquivo convertido.");
+        });
+      })
+      .save(outputPath);
+    req.on("aborted", cleanup);
+  });
+
   // YouTube Data API proxy: keeps the API key on the server and returns embeddable video files only.
   app.get("/api/video/youtube-search", async (req, res) => {
     const apiKey = process.env.YOUTUBE_API_KEY;
