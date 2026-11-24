@@ -163,12 +163,12 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ isOpen, onClose,
   if (!isOpen) return null;
 
   return (
-    <div className="modal fade show d-block" style={{ backgroundColor: 'rgba(0,0,0,0.85)', zIndex: 1060, backdropFilter: 'blur(10px)' }}>
-      <div className="modal-dialog modal-lg modal-dialog-centered">
+    <div className="w-100" style={{ backgroundColor: "transparent" }}>
+      <div className="container px-0" style={{ maxWidth: 900 }}>
         <motion.div 
           initial={{ opacity: 0, y: 20, scale: 0.95 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
-          className="modal-content bg-dark border-secondary shadow-2xl overflow-hidden"
+          className="card bg-dark border-secondary shadow-lg overflow-hidden"
         >
           <div className="modal-header border-secondary bg-black bg-opacity-50 py-3">
             <h5 className="modal-title text-white d-flex align-items-center gap-2">
