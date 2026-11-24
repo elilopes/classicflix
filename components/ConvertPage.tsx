@@ -6,7 +6,7 @@ import type { AppLanguage } from "../types";
 
 export function ConvertPage({ onClose, language }: { onClose: () => void; language: AppLanguage }) {
   const [tab, setTab] = useState<"convert" | "download">("convert");
-  return <div className="min-vh-100 bg-black text-white">
+  return <div className="min-vh-100 bg-black text-white" style={{ position: "fixed", inset: 0, zIndex: 2000, overflowY: "auto" }}>
     <header className="sticky-top bg-dark border-bottom border-secondary px-3 py-3">
       <div className="container d-flex align-items-center justify-content-between gap-3">
         <button className="btn btn-outline-light btn-sm d-flex align-items-center gap-2" onClick={onClose}><ArrowLeft size={17}/> Voltar ao ClassicFlix</button>
