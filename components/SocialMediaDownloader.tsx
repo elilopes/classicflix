@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Search, Download, Loader2, Link2, Youtube, AlertCircle, CheckCircle2, Clipboard } from "lucide-react";
+import { Search, Download, Loader2, Link2, Youtube, AlertCircle, CheckCircle2 } from "lucide-react";
 
 type SearchResult = { id: string; title: string; url: string; thumbnail: string; duration: string; author: string };
 
