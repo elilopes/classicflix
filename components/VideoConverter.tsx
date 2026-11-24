@@ -17,7 +17,7 @@ interface VideoConverterProps {
   language: AppLanguage;
 }
 
-const VIDEO_FORMATS = ["mp4", "webm", "mkv", "avi", "mov", "flv"];
+const VIDEO_FORMATS = ["mp4", "webm", "mkv", "avi", "mov", "flv", "mp3", "wav", "aac", "m4a", "flac", "ogg"];
 const CLIENT_SIDE_LIMIT = 50 * 1024 * 1024; // 50MB
 
 export const VideoConverter: React.FC<VideoConverterProps> = ({ isOpen, onClose, language }) => {
@@ -96,7 +96,7 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ isOpen, onClose,
       await ffmpeg.exec(['-i', inputName, outputName]);
       
       const data = await ffmpeg.readFile(outputName);
-      const url = URL.createObjectURL(new Blob([(data as any).buffer], { type: `video/${outputFormat}` }));
+      const url = URL.createObjectURL(new Blob([(data as any).buffer], { type: outputFormat === "mp3" ? "audio/mpeg" : outputFormat === "wav" ? "audio/wav" : `video/${outputFormat}` }));
       
       setDownloadUrl(url);
       setStatus('success');
@@ -114,19 +114,18 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ isOpen, onClose,
     setMessage("Enviando arquivo para o servidor...");
     
     const formData = new FormData();
-    formData.append('video', file);
+    formData.append('file', file);
     formData.append('format', outputFormat);
     
     try {
-      const response = await fetch('/api/convert', {
+      const response = await fetch('/api/convert-server', {
         method: 'POST',
         body: formData,
       });
       
-      if (!response.ok) throw new Error("Server conversion failed");
-      
-      const result = await response.json();
-      setDownloadUrl(result.downloadUrl);
+      if (!response.ok) { const errorText = await response.text(); throw new Error(errorText || 'Server conversion failed'); }
+      const convertedBlob = await response.blob();
+      setDownloadUrl(URL.createObjectURL(convertedBlob));
       setStatus('success');
       setMessage("Conversão concluída no servidor!");
     } catch (err) {
@@ -189,7 +188,7 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ isOpen, onClose,
                   type="file" 
                   ref={fileInputRef} 
                   className="d-none" 
-                  accept="video/*" 
+                  accept="video/*,audio/*" 
                   onChange={handleFileChange} 
                 />
                 <div className="bg-danger bg-opacity-10 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4">
