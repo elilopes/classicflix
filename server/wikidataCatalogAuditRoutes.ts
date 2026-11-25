@@ -1,10 +1,27 @@
 import express, { type Request, type Response, type NextFunction } from "express";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 const ADMIN_EMAIL = "liclopes@gmail.com";
+const DEFAULT_SUPABASE_URL = "https://rqtlqqmdldpsrtuviedy.supabase.co";
 const FIREBASE_WEB_API_KEY =
   process.env.FIREBASE_WEB_API_KEY || "AIzaSyBLtswBOdch7tmJ1yySKi-S0HG7j_ZkSP0";
 const MAX_QIDS_PER_BATCH = 50;
 const requestWindows = new Map<string, { startedAt: number; count: number }>();
+
+const getSupabaseAdminClient = (): SupabaseClient => {
+  const url = process.env.SUPABASE_URL || DEFAULT_SUPABASE_URL;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceKey) {
+    const err = new Error(
+      "SUPABASE_SERVICE_ROLE_KEY não está configurada no servidor para excluir registros."
+    ) as Error & { statusCode?: number };
+    err.statusCode = 503;
+    throw err;
+  }
+  return createClient(url, serviceKey, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+  });
+};
 
 
 async function verifyFirebaseAdmin(req: Request, res: Response, next: NextFunction) {
@@ -97,6 +114,47 @@ export const createWikidataCatalogAuditRouter = () => {
     } catch (error: any) {
       console.error("[Wikidata catalog audit] batch failed:", error);
       return res.status(502).json({ error: error?.name === "TimeoutError" ? "Tempo limite ao consultar o Wikidata." : "Falha de rede ao consultar o Wikidata.", transient: true });
+    }
+  });
+
+  router.delete("/movies/:wikidataId", async (req, res) => {
+    const qid = String(req.params.wikidataId || "").trim().toUpperCase();
+    if (!/^Q[1-9]\d*$/.test(qid)) {
+      return res.status(400).json({ error: "QID do Wikidata inválido para exclusão." });
+    }
+
+    let client: SupabaseClient;
+    try {
+      client = getSupabaseAdminClient();
+    } catch (err: any) {
+      return res.status(err?.statusCode || 503).json({
+        error: err?.message || "Servidor sem acesso administrativo ao Supabase.",
+      });
+    }
+
+    try {
+      const { data, error } = await client
+        .from("movies")
+        .delete()
+        .ilike("wikidataid", qid)
+        .select("id, wikidataid");
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      if (!data || data.length === 0) {
+        return res.status(404).json({
+          error: `Registro ${qid} não foi encontrado na tabela movies.`,
+        });
+      }
+
+      return res.json({ deleted: data.length, wikidataid: qid });
+    } catch (error: any) {
+      console.error("[Wikidata catalog audit] delete failed:", error);
+      return res.status(500).json({
+        error: error?.message || `Falha ao excluir a produção ${qid}.`,
+      });
     }
   });
 

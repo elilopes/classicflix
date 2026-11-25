@@ -37,7 +37,7 @@ const fields: Array<{ key: ImportField; label: string }> = [
   { key: 'genres', label: 'Gêneros' },
   { key: 'themes', label: 'Temas' },
   { key: 'cast', label: 'Elenco' },
-  { key: 'rating', label: 'Avaliação TMDb' },
+  { key: 'rating', label: 'Avaliação (TMDb / fallback)' },
   { key: 'posterUrl', label: 'Pôster principal' },
   { key: 'videoUrl', label: 'Vídeo principal' },
   { key: 'trailerUrl', label: 'Trailer' },
@@ -52,9 +52,9 @@ const textValue = (value: unknown): string => {
 };
 
 const initialDraft = (item: WikidataPublicDomainProduction) => ({
-  title: item.originalTitle || item.wikidataLabel || '',
+  title: item.wikidataLabel || item.originalTitle || '',
   titlePt: item.titlePt || '',
-  originalTitle: item.originalTitle || '',
+  originalTitle: item.originalTitle || item.wikidataLabel || '',
   year: item.year || null,
   language: item.language === 'Não informado' ? '' : item.language,
   descriptionEn: item.descriptionEn || '',
@@ -110,11 +110,48 @@ export const WikidataImportReview: React.FC<Props> = ({ item, existingMovie, onC
   const [posterNote, setPosterNote] = useState('');
   const [error, setError] = useState('');
 
+  const applyEnrichmentSuggestions = (result: WikidataEnrichmentResult) => {
+    setEnrichment(result);
+    setDraft((current: any) => {
+      const next = { ...current };
+      if (!current.rating && result.rating?.value) {
+        next.rating = result.rating.value;
+      }
+      const sug = result.titleSuggestions;
+      if (sug) {
+        if (sug.originalTitle && !current.originalTitle) {
+          next.originalTitle = sug.originalTitle;
+        }
+        if (sug.title && (!current.title || (current.title === current.originalTitle && sug.title !== current.originalTitle))) {
+          next.title = sug.title;
+        }
+        if (sug.titlePt && (!current.titlePt || current.titlePt === current.originalTitle)) {
+          next.titlePt = sug.titlePt;
+        }
+      }
+      return next;
+    });
+
+    setSourceByField((current) => {
+      const updates: Record<string, { source: string; url: string }> = {};
+      if (!current.rating && result.rating?.value) {
+        updates.rating = { source: result.rating.source, url: result.rating.url };
+      }
+      if (result.titleSuggestions?.titlePt && result.titleSuggestions.titlePtSource && !current.titlePt) {
+        updates.titlePt = {
+          source: result.titleSuggestions.titlePtSource,
+          url: result.titleSuggestions.titlePtUrl || `https://www.wikidata.org/wiki/${item.wikidataId}`,
+        };
+      }
+      return Object.keys(updates).length ? { ...current, ...updates } : current;
+    });
+  };
+
   useEffect(() => {
     let active = true;
     setLoadingSources(true);
     loadWikidataEnrichment(item)
-      .then((result) => { if (active) setEnrichment(result); })
+      .then((result) => { if (active) applyEnrichmentSuggestions(result); })
       .catch((err: any) => { if (active) setError(err?.message || 'Falha ao consultar fontes complementares.'); })
       .finally(() => { if (active) setLoadingSources(false); });
     return () => { active = false; };
@@ -131,10 +168,16 @@ export const WikidataImportReview: React.FC<Props> = ({ item, existingMovie, onC
 
   const applyTmdbCandidate = (candidate: TmdbMetadataCandidate) => {
     setSelectedTmdbId(candidate.tmdbId);
+    const hasDistinctTmdbPt = Boolean(
+      candidate.localizedTitlePt &&
+      candidate.localizedTitlePt.trim().toLowerCase() !== candidate.originalTitle.trim().toLowerCase()
+    );
     setDraft((current: any) => ({
       ...current,
-      title: candidate.originalTitle || current.title,
-      titlePt: candidate.title || current.titlePt,
+      title: candidate.localizedTitleEn || current.title || candidate.originalTitle,
+      titlePt: hasDistinctTmdbPt
+        ? candidate.localizedTitlePt
+        : (current.titlePt || (candidate.title && candidate.title !== candidate.originalTitle ? candidate.title : current.titlePt)),
       originalTitle: candidate.originalTitle || current.originalTitle,
       year: candidate.year || current.year,
       descriptionPt: candidate.overviewPt || current.descriptionPt,
@@ -147,9 +190,12 @@ export const WikidataImportReview: React.FC<Props> = ({ item, existingMovie, onC
       identifiers: { ...current.identifiers, tmdbId: candidate.tmdbId, imdbId: candidate.imdbId || current.identifiers.imdbId },
     }));
     const url = candidate.pageUrl;
+    const tmdbFields = ['title', 'originalTitle', 'year', 'descriptionPt', 'director', 'genres', 'cast', 'duration', 'posterUrl', 'identifiers'];
+    if (hasDistinctTmdbPt) tmdbFields.push('titlePt');
+    if (candidate.rating) tmdbFields.push('rating');
     setSourceByField((current) => ({
       ...current,
-      ...Object.fromEntries(['title','titlePt','originalTitle','year','descriptionPt','director','genres','cast','rating','duration','posterUrl','identifiers'].map((key) => [key, { source: 'tmdb', url }])),
+      ...Object.fromEntries(tmdbFields.map((key) => [key, { source: 'tmdb', url }])),
     }));
   };
 
@@ -262,22 +308,48 @@ export const WikidataImportReview: React.FC<Props> = ({ item, existingMovie, onC
             <table className="table table-dark table-sm align-middle">
               <thead><tr><th style={{width:34}}>Usar</th><th>Campo</th><th>Valor atual</th><th>Valor proposto</th></tr></thead>
               <tbody>
-                {oldAndNew.map((field) => (
-                  <tr key={field.key}>
-                    <td><input type="checkbox" checked={selectedFields.has(field.key)} onChange={() => toggleField(field.key)} /></td>
-                    <td className="text-nowrap">{field.label}</td>
-                    <td className="small text-secondary" style={{maxWidth:220, overflowWrap:'anywhere'}}>{textValue(field.oldValue)}</td>
-                    <td className="small" style={{maxWidth:300, overflowWrap:'anywhere'}}>{textValue(field.newValue)}</td>
-                  </tr>
-                ))}
+                {oldAndNew.map((field) => {
+                  const isEditableText = field.key === 'title' || field.key === 'titlePt' || field.key === 'originalTitle' || field.key === 'rating';
+                  const fieldSource = sourceByField[field.key]?.source;
+                  return (
+                    <tr key={field.key}>
+                      <td><input type="checkbox" checked={selectedFields.has(field.key)} onChange={() => toggleField(field.key)} /></td>
+                      <td className="text-nowrap">{field.label}</td>
+                      <td className="small text-secondary" style={{maxWidth:220, overflowWrap:'anywhere'}}>{textValue(field.oldValue)}</td>
+                      <td className="small" style={{maxWidth:300, overflowWrap:'anywhere'}}>
+                        {isEditableText ? (
+                          <div className="d-flex flex-column gap-1">
+                            <input
+                              type="text"
+                              className="form-control form-control-sm bg-black text-white border-secondary shadow-none"
+                              value={String(field.newValue ?? '')}
+                              placeholder={field.key === 'rating' ? 'Ex: 7.5' : 'Opcional'}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setDraft((current: any) => ({ ...current, [field.key]: val }));
+                              }}
+                            />
+                            {fieldSource && (
+                              <span className="text-info" style={{ fontSize: '0.7rem' }}>
+                                Fonte: {fieldSource.toUpperCase()}
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          textValue(field.newValue)
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
 
           <div className="d-flex flex-wrap gap-2 align-items-center mb-2">
             <h6 className="text-info mb-0">Fontes complementares</h6>
-            {loadingSources && <span className="small text-secondary"><Loader2 size={13} className="animate-spin"/> Consultando Commons, Internet Archive, TMDb e YouTube…</span>}
-            {!loadingSources && <button className="btn btn-sm btn-outline-secondary" onClick={() => { setEnrichment(null); setLoadingSources(true); loadWikidataEnrichment(item).then(setEnrichment).catch((e:any)=>setError(e.message)).finally(()=>setLoadingSources(false)); }}><RefreshCw size={13}/> Reconsultar</button>}
+            {loadingSources && <span className="small text-secondary"><Loader2 size={13} className="animate-spin"/> Consultando Commons, Internet Archive, TMDb, OMDb, TVMaze e YouTube…</span>}
+            {!loadingSources && <button className="btn btn-sm btn-outline-secondary" onClick={() => { setEnrichment(null); setLoadingSources(true); loadWikidataEnrichment(item).then(applyEnrichmentSuggestions).catch((e:any)=>setError(e.message)).finally(()=>setLoadingSources(false)); }}><RefreshCw size={13}/> Reconsultar</button>}
           </div>
 
           <div className="small text-secondary mb-2">YouTube utiliza o vídeo vinculado no Wikidata (P1651); não é feita busca genérica por título. Todos os resultados externos precisam ser aprovados antes de entrar na ficha.</div>

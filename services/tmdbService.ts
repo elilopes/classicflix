@@ -61,10 +61,17 @@ export const getTmdbMovieDetails = async (tmdbId: string, language: string = 'pt
     const cleanId = tmdbId.replace('tmdb-', '');
 
     try {
-        const response = await fetch(`${BASE_URL}/movie/${cleanId}?api_key=${TMDB_API_KEY}&language=${language}&append_to_response=credits,external_ids`);
+        const response = await fetch(`${BASE_URL}/movie/${cleanId}?api_key=${TMDB_API_KEY}&language=${language}&append_to_response=credits,external_ids,translations`);
         const data = await response.json();
 
         if (data.success === false) return null;
+
+        const translationsList: any[] = Array.isArray(data.translations?.translations) ? data.translations.translations : [];
+        const ptBrTrans = translationsList.find((tr) => tr.iso_639_1 === 'pt' && tr.iso_3166_1 === 'BR' && tr.data?.title);
+        const ptAnyTrans = translationsList.find((tr) => tr.iso_639_1 === 'pt' && tr.data?.title);
+        const enTrans = translationsList.find((tr) => tr.iso_639_1 === 'en' && tr.data?.title);
+        const localizedTitlePt = String(ptBrTrans?.data?.title || ptAnyTrans?.data?.title || '').trim();
+        const localizedTitleEn = String(enTrans?.data?.title || '').trim();
 
         const director = data.credits?.crew?.find((p: any) => p.job === 'Director')?.name || 'Unknown';
         const cast = data.credits?.cast?.slice(0, 8).map((c: any) => c.name) || [];
@@ -78,14 +85,19 @@ export const getTmdbMovieDetails = async (tmdbId: string, language: string = 'pt
         const countries = data.production_countries?.map((c: any) => c.name) || [];
         const productionCompanies = data.production_companies?.map((c: any) => c.name) || [];
 
+        const numericVote = Number(data.vote_average);
+        const validRating = Number.isFinite(numericVote) && numericVote > 0 ? numericVote.toFixed(1) : '';
+
         return {
             title: data.title,
             originalTitle: data.original_title,
+            localizedTitlePt,
+            localizedTitleEn,
             description: data.overview,
             year: data.release_date ? new Date(data.release_date).getFullYear() : 0,
             posterUrl: data.poster_path ? `${IMAGE_BASE_URL}${data.poster_path}` : '',
             language: 'Portuguese',
-            rating: (data.vote_average !== undefined && data.vote_average !== null) ? data.vote_average.toFixed(1) : 'N/A',
+            rating: validRating,
             duration: data.runtime ? `${Math.floor(data.runtime / 60)}h ${data.runtime % 60}m` : '',
             director,
             cast,

@@ -1867,7 +1867,7 @@ export const AdminDeleteModal: React.FC<AdminDeleteModalProps> = ({
                 </p>
               </div>
             )}
-            {activeTab === 'wikidata_audit' && <WikidataCatalogAudit movies={movies} />}
+            {activeTab === 'wikidata_audit' && <WikidataCatalogAudit movies={movies} onRefresh={onRefresh} />}
           </div>
 
           <div className="modal-footer border-danger d-flex justify-content-between align-items-center bg-black">

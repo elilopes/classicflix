@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Download, Loader2, Pause, Play, ShieldCheck } from "lucide-react";
+import { AlertTriangle, Download, Loader2, Pause, Play, ShieldCheck, Trash2 } from "lucide-react";
 import { auth } from "../firebase";
+import { deleteSupabaseMovies } from "../services/supabaseClient";
 import type { Movie } from "../types";
 
 type AuditResult = {
@@ -96,14 +97,22 @@ const classificationLabel: Record<string, string> = {
   api_error: "Erro na consulta",
 };
 
-interface Props { movies: Movie[]; }
+const DELETABLE_CLASSIFICATIONS = new Set(["not_visual_production", "missing_instance"]);
 
-export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
+interface Props {
+  movies: Movie[];
+  onRefresh?: () => void;
+}
+
+export const WikidataCatalogAudit: React.FC<Props> = ({ movies, onRefresh }) => {
   const [results, setResults] = useState<AuditResult[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [progress, setProgress] = useState({ checked: 0, total: 0 });
   const [error, setError] = useState("");
+  const [statusMessage, setStatusMessage] = useState("");
+  const [confirmDeleteQid, setConfirmDeleteQid] = useState<string | null>(null);
+  const [deletingQid, setDeletingQid] = useState<string | null>(null);
   const [filter, setFilter] = useState("all");
   const [page, setPage] = useState(0);
   const PAGE_SIZE = 100;
@@ -142,6 +151,8 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
     setIsRunning(true);
     setIsPaused(false);
     setError("");
+    setStatusMessage("");
+    setConfirmDeleteQid(null);
     setResults([]);
     setPage(0);
     setProgress({ checked: 0, total: candidates.length });
@@ -231,6 +242,42 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
     URL.revokeObjectURL(url);
   };
 
+  const handleDeleteRecord = async (qid: string) => {
+    const user = auth.currentUser;
+    if (!user) {
+      setError("Entre com a conta Google autorizada para excluir registros do catálogo.");
+      return;
+    }
+
+    setDeletingQid(qid);
+    setError("");
+    setStatusMessage("");
+    try {
+      const token = await user.getIdToken();
+      const response = await fetch(`/api/admin/wikidata-catalog-audit/movies/${encodeURIComponent(qid)}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        if (response.status === 503) {
+          await deleteSupabaseMovies([qid]);
+        } else {
+          throw new Error(payload?.error || `Falha ao excluir o registro ${qid}.`);
+        }
+      }
+
+      setResults((prev) => prev.filter((item) => item.wikidataid !== qid));
+      setConfirmDeleteQid(null);
+      setStatusMessage(`Registro ${qid} excluído do catálogo com sucesso.`);
+      onRefresh?.();
+    } catch (err: any) {
+      setError(err?.message || `Erro ao excluir o registro ${qid}.`);
+    } finally {
+      setDeletingQid(null);
+    }
+  };
+
   const filteredResults = filter === "all" ? results : results.filter((item) => item.classification === filter);
   const pageCount = Math.max(1, Math.ceil(filteredResults.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount - 1);
@@ -244,7 +291,7 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
         </h6>
         <p className="small text-secondary mb-2">
           Reconsulta os QIDs do Supabase no Wikidata e confere P31 (instância), P6216 (situação dos direitos autorais),
-          P1476 (título) e labels. A auditoria não modifica nem exclui registros.
+          P1476 (título) e labels. Registros classificados como &quot;Não é produção visual aceita&quot; ou &quot;Sem instância P31&quot; exibem opção individual para exclusão.
         </p>
         <div className="small text-secondary mb-3">
           {candidates.length.toLocaleString("pt-BR")} registros encontrados no catálogo carregado. Consulta em lotes de 50 entidades.
@@ -268,6 +315,7 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
           )}
         </div>
         {error && <div className="alert alert-danger py-2 small mt-3 mb-0">{error}</div>}
+        {statusMessage && <div className="alert alert-success py-2 small mt-3 mb-0">{statusMessage}</div>}
       </div>
 
       {(isRunning || results.length > 0) && (
@@ -303,19 +351,61 @@ export const WikidataCatalogAudit: React.FC<Props> = ({ movies }) => {
               <div className="table-responsive" style={{ maxHeight: 520 }}>
                 <table className="table table-dark table-sm table-hover align-middle">
                   <thead style={{ position: "sticky", top: 0 }}>
-                    <tr><th>QID / título do catálogo</th><th>Label Wikidata</th><th>P1476</th><th>P31</th><th>P6216</th><th>Resultado</th></tr>
+                    <tr><th>QID / título do catálogo</th><th>Label Wikidata</th><th>P1476</th><th>P31</th><th>P6216</th><th>Resultado</th><th className="text-end">Ações</th></tr>
                   </thead>
                   <tbody>
-                    {visibleResults.map((item) => (
-                      <tr key={item.wikidataid}>
-                        <td className="small"><a className="text-info" href={`https://www.wikidata.org/wiki/${item.wikidataid}`} target="_blank" rel="noreferrer">{item.wikidataid}</a><div>{item.catalogTitle || "—"}</div></td>
-                        <td className="small">{item.wikidataLabelEn || item.wikidataLabelPt || "—"}<div className="text-secondary">{item.titleMatchesLabel === null ? "Label ausente" : item.titleMatchesLabel ? "Label confere" : "Label diverge"}</div></td>
-                        <td className="small">{item.titleP1476.join(" / ") || "—"}<div className="text-secondary">{item.titleMatchesP1476 === null ? "P1476 ausente" : item.titleMatchesP1476 ? "Título confere" : "Título diverge"}</div></td>
-                        <td className="small">{item.p31Qids.join(", ") || "—"}<div className="text-secondary">{item.visualProduction ? "Audiovisual" : "Não reconhecida"}</div></td>
-                        <td className="small">{item.p6216Qids.join(", ") || "—"}<div className="text-secondary">{item.publicDomain ? "Domínio público" : "Não confirmado"}</div></td>
-                        <td className="small">{classificationLabel[item.classification] || item.classification}</td>
-                      </tr>
-                    ))}
+                    {visibleResults.map((item) => {
+                      const canDelete = DELETABLE_CLASSIFICATIONS.has(item.classification);
+                      const isConfirming = confirmDeleteQid === item.wikidataid;
+                      const isDeletingRow = deletingQid === item.wikidataid;
+                      return (
+                        <tr key={item.wikidataid}>
+                          <td className="small"><a className="text-info" href={`https://www.wikidata.org/wiki/${item.wikidataid}`} target="_blank" rel="noreferrer">{item.wikidataid}</a><div>{item.catalogTitle || "—"}</div></td>
+                          <td className="small">{item.wikidataLabelEn || item.wikidataLabelPt || "—"}<div className="text-secondary">{item.titleMatchesLabel === null ? "Label ausente" : item.titleMatchesLabel ? "Label confere" : "Label diverge"}</div></td>
+                          <td className="small">{item.titleP1476.join(" / ") || "—"}<div className="text-secondary">{item.titleMatchesP1476 === null ? "P1476 ausente" : item.titleMatchesP1476 ? "Título confere" : "Título diverge"}</div></td>
+                          <td className="small">{item.p31Qids.join(", ") || "—"}<div className="text-secondary">{item.visualProduction ? "Audiovisual" : "Não reconhecida"}</div></td>
+                          <td className="small">{item.p6216Qids.join(", ") || "—"}<div className="text-secondary">{item.publicDomain ? "Domínio público" : "Não confirmado"}</div></td>
+                          <td className="small">{classificationLabel[item.classification] || item.classification}</td>
+                          <td className="small text-end text-nowrap">
+                            {canDelete ? (
+                              isConfirming ? (
+                                <div className="d-inline-flex align-items-center gap-1">
+                                  <button
+                                    type="button"
+                                    className="btn btn-sm btn-danger py-0 px-2"
+                                    disabled={isDeletingRow}
+                                    onClick={() => void handleDeleteRecord(item.wikidataid)}
+                                  >
+                                    {isDeletingRow ? <Loader2 size={12} className="animate-spin" /> : "Confirmar"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn-sm btn-outline-secondary py-0 px-2"
+                                    disabled={isDeletingRow}
+                                    onClick={() => setConfirmDeleteQid(null)}
+                                  >
+                                    Cancelar
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  className="btn btn-sm btn-outline-danger py-0 px-2 d-inline-flex align-items-center gap-1"
+                                  disabled={Boolean(deletingQid)}
+                                  onClick={() => setConfirmDeleteQid(item.wikidataid)}
+                                  title={`Excluir ${item.wikidataid} do catálogo`}
+                                >
+                                  <Trash2 size={12} />
+                                  <span>Excluir</span>
+                                </button>
+                              )
+                            ) : (
+                              <span className="text-secondary">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

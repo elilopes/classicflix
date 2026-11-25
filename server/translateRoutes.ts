@@ -1,17 +1,18 @@
 import express from "express";
 
-const DEFAULT_RAPID_API_KEY = "8d0b2005e5msh7794ca50aee0eb4p14f460jsn249cb3b9d70b";
 const DEFAULT_TRANSLATE_HOST = "google-translate113.p.rapidapi.com";
 
 // Cache em memória no servidor Node.js para evitar chamadas repetidas de rótulos/gêneros idênticos
 const translationCache = new Map<string, string>();
 const MAX_CACHE_SIZE = 5000;
 
-const getRapidApiKey = (): string =>
-  process.env.RAPID_API_KEY || process.env.VITE_RAPID_API_KEY || DEFAULT_RAPID_API_KEY;
+// Circuit breaker para evitar repetir chamadas a um provedor RapidAPI não assinado (401/403) ou em cota (429)
+let rapidTranslateDisabledUntil = 0;
+
+const getRapidApiKey = (): string => (process.env.RAPID_API_KEY || "").trim();
 
 const getTranslateHost = (): string =>
-  process.env.RAPID_API_HOST_TRANSLATE || DEFAULT_TRANSLATE_HOST;
+  (process.env.RAPID_API_HOST_TRANSLATE || DEFAULT_TRANSLATE_HOST).trim();
 
 const extractTranslatedText = (payload: any): string | null => {
   if (!payload) return null;
@@ -97,7 +98,7 @@ const callGoogleTranslate113 = async (
   return translated;
 };
 
-const callNonAiTranslateFallback = async (
+const callGoogleGtxTranslate = async (
   text: string,
   from: string,
   to: string
@@ -109,7 +110,7 @@ const callNonAiTranslateFallback = async (
   )}&tl=${encodeURIComponent(tl)}&dt=t&q=${encodeURIComponent(text)}`;
   const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
   if (!res.ok) {
-    throw new Error(`Fallback HTTP translate error (${res.status})`);
+    throw new Error(`Google GTX HTTP ${res.status}`);
   }
   const data: any = await res.json();
   if (Array.isArray(data) && Array.isArray(data[0])) {
@@ -120,7 +121,31 @@ const callNonAiTranslateFallback = async (
       .trim();
     if (combined) return combined;
   }
-  throw new Error("Fallback HTTP translate retornou resposta vazia.");
+  throw new Error("Google GTX retornou resposta vazia.");
+};
+
+const callMyMemoryTranslate = async (
+  text: string,
+  from: string,
+  to: string
+): Promise<string> => {
+  const sl = !from || from === "auto" ? "en" : from;
+  const tl = to || "pt";
+  const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${encodeURIComponent(
+    `${sl}|${tl}`
+  )}`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+  if (!res.ok) {
+    throw new Error(`MyMemory HTTP ${res.status}`);
+  }
+  const data: any = await res.json();
+  const translated = typeof data?.responseData?.translatedText === "string"
+    ? data.responseData.translatedText.trim()
+    : "";
+  if (translated && data?.responseStatus === 200) {
+    return translated;
+  }
+  throw new Error(data?.responseDetails || "MyMemory retornou resposta vazia.");
 };
 
 export const translateTextNode = async (
@@ -140,23 +165,45 @@ export const translateTextNode = async (
   }
 
   let translatedText = "";
-  let provider = "google-translate113";
+  let provider = "";
 
-  try {
-    translatedText = await callGoogleTranslate113(text, from, to);
-  } catch (primaryErr: any) {
-    console.warn(
-      `[Translate Node] google-translate113 falhou (${primaryErr?.message || primaryErr}); tentando fallback HTTP não-IA.`
-    );
+  // 1. Usa RapidAPI google-translate113 apenas se RAPID_API_KEY estiver configurada e sem bloqueio ativo
+  const rapidKey = getRapidApiKey();
+  if (rapidKey && Date.now() >= rapidTranslateDisabledUntil) {
     try {
-      translatedText = await callNonAiTranslateFallback(text, from, to);
-      provider = "google-translate-http-fallback";
-    } catch (fallbackErr: any) {
-      throw new Error(
-        `Falha na tradução (${primaryErr?.message || primaryErr}; fallback: ${
-          fallbackErr?.message || fallbackErr
-        })`
-      );
+      translatedText = await callGoogleTranslate113(text, from, to);
+      provider = "google-translate113";
+    } catch (primaryErr: any) {
+      const status = Number(primaryErr?.status || 0);
+      if (status === 401 || status === 403) {
+        rapidTranslateDisabledUntil = Date.now() + 60 * 60 * 1000;
+        console.info(
+          `[Translate Node] google-translate113 indisponível (${status}); alternando para provedor HTTP padrão por 60 min.`
+        );
+      } else if (status === 429) {
+        rapidTranslateDisabledUntil = Date.now() + 10 * 60 * 1000;
+        console.info(
+          "[Translate Node] google-translate113 atingiu limite (429); alternando para provedor HTTP padrão por 10 min."
+        );
+      }
+    }
+  }
+
+  // 2. Provedor HTTP não-IA primário (Google Translate GTX)
+  if (!translatedText) {
+    try {
+      translatedText = await callGoogleGtxTranslate(text, from, to);
+      provider = "google-translate-http";
+    } catch (gtxErr: any) {
+      // 3. Fallback HTTP secundário (MyMemory)
+      try {
+        translatedText = await callMyMemoryTranslate(text, from, to);
+        provider = "mymemory-http-fallback";
+      } catch (mmErr: any) {
+        throw new Error(
+          `Falha na tradução (${gtxErr?.message || gtxErr}; fallback: ${mmErr?.message || mmErr})`
+        );
+      }
     }
   }
 
@@ -188,7 +235,7 @@ export function createTranslateRouter() {
         return res.json({
           translations: results.map((r) => r.translatedText),
           details: results,
-          provider: results.find((r) => r.provider !== "passthrough")?.provider || "google-translate113",
+          provider: results.find((r) => r.provider !== "passthrough")?.provider || "google-translate-http",
         });
       }
 
@@ -238,7 +285,7 @@ export function createTranslateRouter() {
       );
 
       const translatedMap = new Map<string, string>();
-      let lastProvider = "google-translate113";
+      let lastProvider = "google-translate-http";
 
       for (const str of uniqueStrings) {
         const resItem = await translateTextNode(str, from, to);

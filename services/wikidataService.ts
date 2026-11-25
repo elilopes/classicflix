@@ -1002,16 +1002,23 @@ const getClaimEntityIds = (claims: any, prop: string): string[] => {
     return out;
 };
 
-const getPreferredMonolingualTitle = (claims: any): string => {
+const getPreferredMonolingualTitle = (claims: any, preferredOriginalLangCodes: string[] = []): string => {
     const list = claims?.P1476;
     if (!Array.isArray(list)) return '';
     const entries = list
         .map((c: any) => c?.mainsnak?.datavalue?.value)
         .filter((v: any) => v && typeof v.text === 'string' && v.text.trim());
     if (!entries.length) return '';
+    for (const code of preferredOriginalLangCodes) {
+        const match = entries.find((v: any) => String(v.language || '').toLowerCase() === code.toLowerCase());
+        if (match) return String(match.text).trim();
+    }
+    const nonEn = entries.find((v: any) => {
+        const lang = String(v.language || '').toLowerCase();
+        return lang && lang !== 'en' && lang !== 'pt' && lang !== 'pt-br';
+    });
     const en = entries.find((v: any) => String(v.language || '').toLowerCase() === 'en');
-    const pt = entries.find((v: any) => String(v.language || '').toLowerCase() === 'pt');
-    return String((en || pt || entries[0]).text).trim();
+    return String((entries[0] || nonEn || en).text).trim();
 };
 
 const getEntityLabel = (entity: any, preferredLangs: string[]): string => {
@@ -1081,7 +1088,7 @@ LIMIT ${limit}`;
         const entities = await fetchWikidataEntitiesChunk(
             chunkQids,
             "labels|descriptions|claims",
-            "en|pt|es|fr|de|it|ru"
+            "en|pt|pt-br|es|fr|de|it|ru"
         );
         Object.assign(entityByQid, entities);
     }
@@ -1181,7 +1188,7 @@ LIMIT ${limit}`;
 
         const titleP1476 = getPreferredMonolingualTitle(claims);
         const label = getEntityLabel(entity, ["en", "pt", "es", "fr", "de", "it", "ru"]) || c.qid;
-        const labelPt = entity.labels?.pt?.value || "";
+        const labelPt = entity.labels?.["pt-br"]?.value || entity.labels?.pt?.value || "";
 
         const descriptionEn = entity.descriptions?.en?.value || "";
         const descriptionPt = entity.descriptions?.pt?.value || "";

@@ -336,7 +336,7 @@ export const persistWikidataProduction = async (input: PersistWikidataProduction
     if (!supabase) throw new Error('Supabase indisponível. Nenhuma alteração foi gravada.');
 
     const qid = input.item.wikidataId?.trim().toUpperCase();
-    if (!qid || !/^Q\\d+$/.test(qid)) throw new Error('QID do Wikidata inválido.');
+    if (!qid || !/^Q[1-9]\d*$/.test(qid)) throw new Error('QID do Wikidata inválido.');
 
     const draft = input.draft || {};
     const movieRow = {
@@ -391,40 +391,102 @@ export const persistWikidataProduction = async (input: PersistWikidataProduction
         tmdbid: draft.identifiers?.tmdbId || null,
     };
 
-    const { data, error } = await supabase.rpc('classicflix_import_movie_with_history', {
-        p_action: input.action,
-        p_movie: movieRow,
-        p_description: descriptionRow,
-        p_technicaldetails: technicalRow,
-        p_identifiers: identifiers,
-        p_selected_fields: input.selectedFields,
-        p_sources: input.sources || {},
-        p_media: input.media || [],
-    });
-    if (error) {
-        try {
-            const { error: auditError } = await supabase.rpc('classicflix_log_import_failure', {
-                p_qid: qid,
-                p_action: input.action,
-                p_error: error.message || 'Falha ao gravar a importação e seu histórico.',
-                p_selected_fields: input.selectedFields,
-            });
-            if (auditError) console.warn('Não foi possível registrar a falha no histórico:', auditError.message);
-        } catch (auditError) {
-            console.warn('Não foi possível registrar a falha no histórico:', auditError);
+    const { data: { session } } = await supabase.auth.getSession();
+    const hasSupabaseAdminSession = session?.user?.email?.toLowerCase() === 'liclopes@gmail.com';
+
+    if (hasSupabaseAdminSession) {
+        const { data, error } = await supabase.rpc('classicflix_import_movie_with_history', {
+            p_action: input.action,
+            p_movie: movieRow,
+            p_description: descriptionRow,
+            p_technicaldetails: technicalRow,
+            p_identifiers: identifiers,
+            p_selected_fields: input.selectedFields,
+            p_sources: input.sources || {},
+            p_media: input.media || [],
+        });
+        if (!error) {
+            return data as string;
         }
-        console.error('Falha na importação/revisão Wikidata:', error);
-        throw new Error(error.message || 'Falha ao gravar a importação e seu histórico.');
+        // If RPC fails for permission reasons while Firebase admin is signed in, fall through to server route
+        if (error.code !== '42501' || !auth.currentUser) {
+            try {
+                const { error: auditError } = await supabase.rpc('classicflix_log_import_failure', {
+                    p_qid: qid,
+                    p_action: input.action,
+                    p_error: error.message || 'Falha ao gravar a importação e seu histórico.',
+                    p_selected_fields: input.selectedFields,
+                });
+                if (auditError) console.warn('Não foi possível registrar a falha no histórico:', auditError.message);
+            } catch (auditError) {
+                console.warn('Não foi possível registrar a falha no histórico:', auditError);
+            }
+            console.error('Falha na importação/revisão Wikidata:', error);
+            throw new Error(error.message || 'Falha ao gravar a importação e seu histórico.');
+        }
     }
-    return data as string;
+
+    const fbUser = auth.currentUser;
+    if (!fbUser) {
+        throw new Error('Faça login com a conta Google autorizada (liclopes@gmail.com) para importar produções.');
+    }
+
+    const token = await fbUser.getIdToken();
+    const response = await fetch('/api/admin/wikidata-import', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+            action: input.action,
+            movie: movieRow,
+            description: descriptionRow,
+            technicaldetails: technicalRow,
+            identifiers,
+            selectedFields: input.selectedFields,
+            sources: input.sources || {},
+            media: input.media || [],
+        }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(payload?.error || 'Falha ao gravar a importação e seu histórico.');
+    }
+    return String(payload.jobId || '');
 };
 
 export const getWikidataImportHistory = async (limit = 50) => {
     const supabase = await getSupabase();
     if (!supabase) throw new Error('Supabase indisponível para consultar o histórico.');
-    const { data, error } = await supabase.rpc('classicflix_get_import_history', { p_limit: limit });
-    if (error) throw new Error(error.message || 'Falha ao consultar histórico de importações.');
-    return data || [];
+
+    const { data: { session } } = await supabase.auth.getSession();
+    const hasSupabaseAdminSession = session?.user?.email?.toLowerCase() === 'liclopes@gmail.com';
+
+    if (hasSupabaseAdminSession) {
+        const { data, error } = await supabase.rpc('classicflix_get_import_history', { p_limit: limit });
+        if (!error) return data || [];
+        if (error.code !== '42501' || !auth.currentUser) {
+            throw new Error(error.message || 'Falha ao consultar histórico de importações.');
+        }
+    }
+
+    const fbUser = auth.currentUser;
+    if (!fbUser) {
+        throw new Error('Faça login com a conta Google autorizada para consultar o histórico.');
+    }
+
+    const token = await fbUser.getIdToken();
+    const response = await fetch(`/api/admin/wikidata-import/history?limit=${encodeURIComponent(String(limit))}`, {
+        headers: {
+            Authorization: `Bearer ${token}`,
+        },
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(payload?.error || 'Falha ao consultar histórico de importações.');
+    }
+    return Array.isArray(payload?.items) ? payload.items : [];
 };
 
 // Fix: Implement updateSupabaseMovie to update movies, description, and technicaldetails directly
